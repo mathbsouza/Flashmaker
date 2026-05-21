@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "CropPDF",
+  "version": "1.0.0",
+  "description": "Converta um intervalo de páginas de um PDF aberto em JPG e baixe em ZIP.",
+  "action": {
+    "default_title": "CropPDF"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "offscreen",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

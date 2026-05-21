@@ -1,0 +1,14 @@
+{
+  "name": "croppdf",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.0",
+    "jszip": "^3.10.1",
+    "pdfjs-dist": "^4.10.38"
+  }
+}
