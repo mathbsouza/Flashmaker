@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '..');
-const srcDir = path.join(rootDir, 'src');
-const distDir = path.join(rootDir, 'dist');
+const projectRoot = path.resolve(__dirname, '..');
+const srcDir = path.join(__dirname, 'src');
+const distDir = path.join(__dirname, 'dist');
 
 const sharedBuildOptions = {
   bundle: true,
@@ -44,7 +44,7 @@ for (const file of ['manifest.json', 'popup.html', 'offscreen.html', 'styles.css
 }
 
 await copyFile(
-  path.join(rootDir, 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs'),
+  path.join(projectRoot, 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs'),
   path.join(distDir, 'pdf.worker.min.mjs'),
 );
 

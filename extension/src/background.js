@@ -1,5 +1,3 @@
-import { buildZipName } from './shared.js';
-
 const OFFSCREEN_PATH = 'offscreen.html';
 let creatingOffscreen = null;
 
@@ -13,72 +11,33 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
 
-  if (message.type === 'START_EXPORT') {
-    void startExport(message.payload);
-  }
-
-  if (message.type === 'DOWNLOAD_ZIP') {
-    void downloadZip(message.payload);
+  if (message.type === 'START_PROMPT') {
+    void startPrompt(message.payload);
   }
 });
 
-async function startExport(payload) {
+async function startPrompt(payload) {
   try {
     await ensureOffscreenDocument();
     postRuntimeMessage({
-      type: 'CROPPDF_STATUS',
+      type: 'FLASHMARKER_STATUS',
       jobId: payload.jobId,
-      message: `Processando ${buildZipName(payload.baseName || 'CropPDF')}...`,
+      message: 'Preparando PDF...',
       progress: 6,
       progressText: 'Abrindo PDF',
     });
 
     postRuntimeMessage({
       target: 'offscreen',
-      type: 'PROCESS_PDF',
+      type: 'GENERATE_PROMPT',
       payload,
     });
   } catch (error) {
     postRuntimeMessage({
-      type: 'CROPPDF_ERROR',
+      type: 'FLASHMARKER_ERROR',
       jobId: payload?.jobId,
       message: getErrorMessage(error),
     });
-  }
-}
-
-async function downloadZip(payload) {
-  try {
-    await chrome.downloads.download({
-      url: payload.downloadUrl,
-      filename: payload.downloadName,
-      saveAs: false,
-      conflictAction: 'uniquify',
-    });
-
-    postRuntimeMessage({
-      type: 'CROPPDF_DONE',
-      jobId: payload.jobId,
-      message: `ZIP pronto: ${payload.downloadName}`,
-      progress: 100,
-      progressText: 'Download iniciado',
-    });
-  } catch (error) {
-    postRuntimeMessage({
-      type: 'CROPPDF_ERROR',
-      jobId: payload?.jobId,
-      message: getErrorMessage(error),
-    });
-  } finally {
-    setTimeout(() => {
-      postRuntimeMessage({
-        target: 'offscreen',
-        type: 'REVOKE_DOWNLOAD_URL',
-        payload: {
-          downloadUrl: payload?.downloadUrl,
-        },
-      });
-    }, 60_000);
   }
 }
 
@@ -99,8 +58,8 @@ async function ensureOffscreenDocument() {
     creatingOffscreen = chrome.offscreen
       .createDocument({
         url: OFFSCREEN_PATH,
-        reasons: ['BLOBS', 'WORKERS'],
-        justification: 'Renderizar PDFs e montar ZIPs em JavaScript fora da sidebar.',
+        reasons: ['DOM_PARSER', 'WORKERS'],
+        justification: 'Ler PDFs com PDF.js e gerar prompt de flashcards fora da sidebar.',
       })
       .finally(() => {
         creatingOffscreen = null;

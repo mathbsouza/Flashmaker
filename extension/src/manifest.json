@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "CropPDF",
+  "name": "FlashMaker",
   "version": "1.0.0",
-  "description": "Converta um intervalo de páginas de um PDF aberto em JPG e baixe em ZIP.",
+  "description": "Extraia páginas de um PDF aberto e gere um prompt de flashcards na sidebar.",
   "action": {
-    "default_title": "CropPDF"
+    "default_title": "FlashMaker"
   },
   "side_panel": {
     "default_path": "popup.html"
