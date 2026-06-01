@@ -11,23 +11,13 @@
       <header class="hero">
         <p class="app">FlashMaker</p>
         <h1>Prompt de flashcards</h1>
-        <p id="pdfHint" class="muted">Abra um PDF no Chrome para começar.</p>
+        <p id="pdfHint" class="muted">Abra um PDF no Chrome para comecar.</p>
       </header>
 
       <section class="panel">
         <label class="field">
           <span>PDF encontrado</span>
           <div id="pdfState" class="readout">Nenhum PDF selecionado</div>
-        </label>
-
-        <label class="field">
-          <span>Source name</span>
-          <input id="sourceName" type="text" />
-        </label>
-
-        <label class="field">
-          <span>Tema do deck</span>
-          <input id="theme" type="text" />
         </label>
 
         <label class="field">
@@ -41,7 +31,17 @@
         </label>
 
         <label class="field">
-          <span>Autores / sociedade</span>
+          <span>Source name</span>
+          <input id="sourceName" type="text" />
+        </label>
+
+        <label class="field">
+          <span>Identificador da imagem</span>
+          <input id="imageIdentifier" type="text" placeholder="Depois de Med_FRMW2026_" />
+        </label>
+
+        <label class="field">
+          <span>Autores / Sociedade</span>
           <input id="sourceAuthors" type="text" />
         </label>
 
@@ -51,23 +51,28 @@
         </label>
 
         <label class="field">
-          <span>Título completo</span>
+          <span>Titulo do livro/artigo</span>
           <input id="sourceTitle" type="text" />
         </label>
 
         <label class="field">
-          <span>Periódico / livro / instituição</span>
+          <span>Periodico/Editora/Instituicao</span>
           <input id="sourceContainer" type="text" />
         </label>
 
         <label class="field">
-          <span>Página inicial</span>
+          <span>Pagina inicial</span>
           <input id="pageStart" type="number" min="1" step="1" value="1" />
         </label>
 
         <label class="field">
-          <span>Página final</span>
+          <span>Pagina final</span>
           <input id="pageEnd" type="number" min="1" step="1" value="1" />
+        </label>
+
+        <label class="check-field">
+          <input id="allPages" type="checkbox" />
+          <span>Usar todas as paginas</span>
         </label>
 
         <button id="runButton" type="button">Extrair PDF e gerar prompt</button>
@@ -93,10 +98,18 @@
 
       <section class="panel">
         <div class="section-head">
-          <p class="section-title">Prompt</p>
-          <button id="copyPromptButton" type="button" class="ghost">Copiar</button>
+          <p class="section-title">Prompt para enviar antes</p>
+          <button id="copyInstructionPromptButton" type="button" class="ghost">Copiar</button>
         </div>
-        <textarea id="promptOutput" readonly placeholder="O prompt gerado vai aparecer aqui."></textarea>
+        <textarea id="instructionPromptOutput" readonly placeholder="As instrucoes para o ChatGPT vao aparecer aqui."></textarea>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <p class="section-title">Prompt com o conteudo</p>
+          <button id="copyContentPromptButton" type="button" class="ghost">Copiar</button>
+        </div>
+        <textarea id="contentPromptOutput" readonly placeholder="O conteudo extraido do PDF vai aparecer aqui."></textarea>
       </section>
     </main>
 

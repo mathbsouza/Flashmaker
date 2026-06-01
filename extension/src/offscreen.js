@@ -1,11 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs';
+import JSZip from 'jszip';
 import {
+  buildZipName,
   parsePageRange,
 } from './shared.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('pdf.worker.min.mjs');
 
 let activeJobId = null;
+const MAX_CANVAS_PIXELS = 90_000_000;
+const pendingDownloadUrls = new Set();
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== 'offscreen') {
@@ -14,6 +18,10 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === 'GENERATE_PROMPT') {
     void generatePrompt(message.payload);
+  }
+
+  if (message.type === 'REVOKE_DOWNLOAD_URL') {
+    revokeDownloadUrl(message.payload?.downloadUrl);
   }
 });
 
@@ -38,36 +46,67 @@ async function generatePrompt(payload) {
     ({ loadingTask, pdf } = await openPdf(pdfUrl));
 
     const totalPages = pdf.numPages;
-    const selectedPages = parsePageRange(payload.pageStart, payload.pageEnd, totalPages);
+    const selectedPages = payload.allPages
+      ? Array.from({ length: totalPages }, (_, index) => index + 1)
+      : parsePageRange(payload.pageStart, payload.pageEnd, totalPages);
     const sourceName = String(payload.sourceName ?? '').trim();
-    const sourceType = String(payload.sourceType ?? '').trim() || 'Artigos';
-    const sourceSlug = slugify(sourceName);
+    const sourceType = String(payload.sourceType ?? '').trim() || 'Outros';
+    const imageIdentifier = String(payload.imageIdentifier ?? '').trim() || sourceName;
+    const sourceSlug = slugify(imageIdentifier);
+    const imageBaseName = `Med_${sourceType}_${sourceSlug}`;
     const pagePadding = Math.max(2, String(totalPages).length);
+    const dpi = Number.isInteger(Number(payload.dpi)) && Number(payload.dpi) > 0
+      ? Number(payload.dpi)
+      : 150;
+    const scale = dpi / 72;
     const pages = [];
+    const zip = new JSZip();
 
     for (let index = 0; index < selectedPages.length; index += 1) {
       const pageNumber = selectedPages[index];
-      const progress = 12 + Math.round((index / selectedPages.length) * 76);
+      const progress = 12 + Math.round((index / selectedPages.length) * 72);
       const countText = `${index + 1} de ${selectedPages.length}`;
 
-      emitStatus(`Extraindo pagina ${pageNumber}...`, progress, countText);
+      emitStatus(`Abrindo pagina ${pageNumber}...`, progress, countText);
       const page = await pdf.getPage(pageNumber);
       try {
+        const visualPage = String(pageNumber).padStart(pagePadding, '0');
+        const imageFileName = `${imageBaseName}-${visualPage}.jpg`;
+
+        emitStatus(`Extraindo texto da pagina ${pageNumber}...`, progress + 1, countText);
         const text = await extractPageText(page);
+        page.cleanup?.();
+
+        await yieldToBrowser();
+        emitStatus(`Renderizando pagina ${pageNumber}...`, progress + 3, `${countText} - ${dpi} DPI`);
+        const imageBytes = await renderPageToJpeg(pdf, pageNumber, scale, {
+          progress: progress + 3,
+          countText,
+        });
+
+        emitStatus(`Adicionando imagem da pagina ${pageNumber} ao ZIP...`, progress + 5, imageFileName);
+        zip.file(imageFileName, imageBytes);
         pages.push({
           pageNumber,
-          visualPage: String(pageNumber).padStart(pagePadding, '0'),
-          imageFileName: `Med_${sourceType}_${sourceSlug}-${String(pageNumber).padStart(pagePadding, '0')}.jpg`,
+          visualPage,
+          imageFileName,
           text,
         });
       } finally {
         page.cleanup?.();
       }
+      await yieldToBrowser();
     }
 
-    emitStatus('Montando prompt...', 94, 'Texto final');
-    const prompt = buildPrompt({
-      theme: String(payload.theme ?? '').trim(),
+    emitStatus('Gerando ZIP das imagens...', 88, `${pages.length} JPG`);
+    const zipBlob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'STORE',
+    });
+    await downloadBlob(zipBlob, buildZipName(imageBaseName));
+
+    emitStatus('Montando prompts...', 94, 'Texto final');
+    const prompts = buildPrompts({
       sourceName,
       sourceSlug,
       sourceType,
@@ -86,12 +125,10 @@ async function generatePrompt(payload) {
     chrome.runtime.sendMessage({
       type: 'FLASHMARKER_DONE',
       jobId: activeJobId,
-      message: 'Prompt pronto.',
+      message: 'Prompts prontos e imagens baixadas.',
       progress: 100,
       progressText: 'Concluido',
-      payload: {
-        prompt,
-      },
+      payload: prompts,
     });
   } catch (error) {
     emitError(activeJobId, getErrorMessage(error));
@@ -102,6 +139,10 @@ async function generatePrompt(payload) {
 }
 
 async function openPdf(pdfUrl) {
+  if (isFileUrl(pdfUrl)) {
+    return openPdfFromArrayBuffer(pdfUrl, 'Arquivo local');
+  }
+
   const loadingTask = pdfjsLib.getDocument({
     url: pdfUrl,
     withCredentials: true,
@@ -115,10 +156,71 @@ async function openPdf(pdfUrl) {
     emitStatus('Lendo PDF...', mapLoadProgress(loaded, total), formatLoadProgress(loaded, total));
   };
 
+  try {
+    return {
+      loadingTask,
+      pdf: await loadingTask.promise,
+    };
+  } catch {
+    await loadingTask.destroy().catch(() => {});
+    return openPdfFromArrayBuffer(pdfUrl, 'Fallback completo');
+  }
+}
+
+async function openPdfFromArrayBuffer(pdfUrl, label) {
+  emitStatus('Carregando PDF...', 8, label);
+  const data = await fetchPdfBytes(pdfUrl);
+  emitStatus('Abrindo PDF...', 12, formatBytes(data.byteLength));
+
+  const loadingTask = pdfjsLib.getDocument({
+    data,
+    isOffscreenCanvasSupported: true,
+    canvasMaxAreaInBytes: 32 * 1024 * 1024,
+  });
+
   return {
     loadingTask,
     pdf: await loadingTask.promise,
   };
+}
+
+async function fetchPdfBytes(pdfUrl) {
+  const response = await fetch(pdfUrl, { credentials: 'include' });
+  if (!response.ok && response.status !== 0) {
+    throw new Error(`Nao foi possivel abrir o PDF (${response.status}).`);
+  }
+
+  const total = Number(response.headers.get('content-length')) || 0;
+  if (!response.body) {
+    const data = new Uint8Array(await response.arrayBuffer());
+    emitStatus('Carregando PDF...', 12, formatLoadProgress(data.byteLength, total));
+    return data;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    chunks.push(value);
+    loaded += value.byteLength;
+    emitStatus('Carregando PDF...', mapLoadProgress(loaded, total), formatLoadProgress(loaded, total));
+    await yieldToBrowser();
+  }
+
+  const data = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return data;
 }
 
 async function extractPageText(page) {
@@ -161,8 +263,119 @@ async function extractPageText(page) {
   return lines.filter(Boolean).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function buildPrompt({
-  theme,
+async function renderPageToJpeg(pdf, pageNumber, scale, details) {
+  let page = null;
+  let canvas = null;
+  let renderTask = null;
+  let renderTicker = null;
+
+  try {
+    emitStatus(`Abrindo pagina ${pageNumber} para imagem...`, details.progress, details.countText);
+    page = await pdf.getPage(pageNumber);
+
+    const viewport = page.getViewport({ scale });
+    const width = Math.ceil(viewport.width);
+    const height = Math.ceil(viewport.height);
+
+    if (width * height > MAX_CANVAS_PIXELS) {
+      throw new Error('Pagina grande demais para esse DPI. Reduza a qualidade da imagem.');
+    }
+
+    emitStatus(`Preparando imagem da pagina ${pageNumber}...`, details.progress, `${width}x${height}`);
+    canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) {
+      throw new Error('Nao foi possivel criar canvas.');
+    }
+
+    canvas.width = width;
+    canvas.height = height;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+
+    emitStatus(`Renderizando pagina ${pageNumber}...`, details.progress, details.countText);
+    const startedAt = performance.now();
+    renderTicker = setInterval(() => {
+      const elapsed = Math.max(1, Math.round((performance.now() - startedAt) / 1000));
+      emitStatus(`Renderizando pagina ${pageNumber}...`, details.progress, `${details.countText} - ${elapsed}s`);
+    }, 2500);
+
+    renderTask = page.render({
+      canvasContext: context,
+      viewport,
+      annotationMode: pdfjsLib.AnnotationMode.DISABLE,
+      intent: 'print',
+    });
+
+    renderTask.onContinue = (continueRender) => {
+      setTimeout(continueRender, 0);
+    };
+
+    await renderTask.promise;
+
+    emitStatus(`Convertendo pagina ${pageNumber}...`, details.progress, details.countText);
+    const imageBlob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
+    return await imageBlob.arrayBuffer();
+  } catch (error) {
+    renderTask?.cancel?.();
+    throw error;
+  } finally {
+    if (renderTicker) {
+      clearInterval(renderTicker);
+    }
+
+    page?.cleanup?.();
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+        return;
+      }
+
+      reject(new Error('Nao foi possivel gerar a imagem JPG.'));
+    }, type, quality);
+  });
+}
+
+async function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  pendingDownloadUrls.add(url);
+  const response = await chrome.runtime.sendMessage({
+    target: 'background',
+    type: 'DOWNLOAD_FILE',
+    payload: {
+      filename,
+      downloadUrl: url,
+    },
+  });
+
+  if (!response?.ok) {
+    revokeDownloadUrl(url);
+    throw new Error(response?.message || 'Nao foi possivel baixar o ZIP de imagens.');
+  }
+
+  setTimeout(() => {
+    revokeDownloadUrl(url);
+  }, 60_000);
+}
+
+function revokeDownloadUrl(downloadUrl) {
+  if (!downloadUrl || !pendingDownloadUrls.delete(downloadUrl)) {
+    return;
+  }
+
+  URL.revokeObjectURL(downloadUrl);
+}
+
+function buildPrompts({
   sourceName,
   sourceSlug,
   sourceType,
@@ -172,6 +385,28 @@ function buildPrompt({
   pageEnd,
   pages,
 }) {
+  const sourceTitle = buildSourceTitle(sourceType, sourceName);
+  const sourceLine = buildSourceLine({
+    sourceType,
+    sourceName,
+    authors: bibliography.authors,
+    year: bibliography.year,
+    title: bibliography.title,
+    container: bibliography.container,
+  });
+  const sourceHtmlTemplate = `<div class="quote">
+    <div class="title">
+        ${sourceTitle}
+    </div>
+    <hr>
+    <div class="reference">
+        <img src="Med_${sourceType}_${sourceSlug}-[PaginaVisual].jpg">
+    </div>
+    <hr>
+    <div class="source">
+        ${sourceLine}
+    </div>
+</div>`;
   const pageBlocks = pages
     .map((page) => {
       const excerpt = page.text.trim() || '[Sem texto extraido desta pagina]';
@@ -184,56 +419,52 @@ function buildPrompt({
     })
     .join('\n\n');
 
-  return `
-Você é um especialista em educação médica e criação de flashcards para provas de residência médica/R3.
+  const instructionPrompt = `
+Voce e um especialista em educacao medica e criacao de flashcards para provas de residencia medica/R3.
 
-Vou enviar um artigo, guideline, capítulo, resumo, ficha-resumo, apostila ou material de estudo em PDF ou texto. Sua tarefa é gerar um arquivo CSV com poucos flashcards do tipo BASIC, voltados exclusivamente para MEMORIZAÇÃO intensiva de itens high-yield.
-
-TEMA DO DECK:
-${theme}
+Vou enviar um artigo, guideline, capitulo, resumo, ficha-resumo, apostila ou material de estudo em PDF ou texto. Sua tarefa e gerar um arquivo CSV com poucos flashcards do tipo BASIC, voltados exclusivamente para MEMORIZACAO intensiva de itens high-yield.
 
 OBJETIVO:
-Criar flashcards apenas sobre informações que precisam ser decoradas para prova e que não seriam facilmente aprendidas apenas pela resolução de questões. Priorize dados objetivos, cortes, critérios, tempos, exceções, indicações formais, contraindicações, sequências terapêuticas, testes preferenciais, definições operacionais e detalhes fáceis de esquecer.
+Criar flashcards apenas sobre informacoes que precisam ser decoradas para prova e que nao seriam facilmente aprendidas apenas pela resolucao de questoes. Priorize dados objetivos, cortes, criterios, tempos, excecoes, indicacoes formais, contraindicacoes, sequencias terapeuticas, testes preferenciais, definicoes operacionais e detalhes faceis de esquecer.
 
 CONTEXTO DE ENTRADA:
-- Tipo da fonte já determinado: ${sourceType}
-- Source name obrigatório definido pelo usuário: ${sourceName}
-- Identificador obrigatório para o nome das imagens: ${sourceSlug}
-- Referência bibliográfica base definida pelo usuário:
-  - Autores/sociedade: ${bibliography.authors || '[Autor não informado]'}
-  - Ano: ${bibliography.year || '[Ano não informado]'}
-  - Título completo: ${bibliography.title || sourceName}
-  - Periódico/livro/instituição: ${bibliography.container || '[Fonte não informada]'}
-- Páginas visuais selecionadas do PDF: ${pageStart}-${pageEnd}
-- Total de páginas do PDF: ${totalPages}
+- Tipo da fonte ja determinado: ${sourceType}
+- Source name obrigatorio definido pelo usuario: ${sourceName}
+- Identificador obrigatorio para o nome das imagens: ${sourceSlug}
+- Referencia bibliografica base definida pelo usuario:
+  - Autores/sociedade: ${bibliography.authors || '[Autor nao informado]'}
+  - Ano: ${bibliography.year || '[Ano nao informado]'}
+  - Titulo do livro/artigo: ${bibliography.title || sourceName}
+  - Periodico/Editora/Instituicao: ${bibliography.container || '[em branco]'}
+- Paginas visuais selecionadas do PDF: ${pageStart}-${pageEnd}
+- Total de paginas do PDF: ${totalPages}
 
-REGRA ADICIONAL OBRIGATÓRIA SOBRE SOURCE NAME:
-- Use o source name definido pelo usuário como base obrigatória do título padronizado da fonte e do identificador [TituloOuIdentificador].
-- Não substitua esse nome por outro mais curto.
-- Preserve o source name como referência principal mesmo se o PDF trouxer outro título interno, exceto quando as regras especiais de FRMW2026, AMW2026 ou UTD exigirem prefixos específicos.
+REGRA ADICIONAL OBRIGATORIA SOBRE SOURCE NAME:
+- Use o source name definido pelo usuario como base obrigatoria do titulo padronizado da fonte e do identificador [TituloOuIdentificador].
+- Nao substitua esse nome por outro mais curto.
+- Preserve o source name como referencia principal mesmo se o PDF trouxer outro titulo interno, exceto quando as regras especiais de FRMW2026, AMW2026 ou UTD exigirem prefixos especificos.
 - Para o campo <img src="">, use obrigatoriamente o identificador ${sourceSlug}.
 
-FORMATO OBRIGATÓRIO DO CSV:
-PERGUNTA,DICA,RESPOSTA,EXPLICAÇÃO,FONTE
+FORMATO OBRIGATORIO DO CSV:
+PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
 
 REGRAS GERAIS:
 - Gere poucos flashcards.
-- Cada flashcard deve testar uma única informação principal.
+- Cada flashcard deve testar uma unica informacao principal.
 - Os flashcards devem ser do tipo BASIC.
 - A pergunta deve ser direta.
 - A dica deve ajudar sem entregar a resposta.
 - A resposta deve ser objetiva e curta.
-- A explicação deve ser breve, focada no motivo pelo qual o item é relevante para prova.
-- Use linguagem médica precisa.
-- Evite cards de raciocínio clínico amplo.
-- Evite perguntas vagas como “qual a conduta?” sem cenário específico.
-- Não crie cards sobre informações óbvias, intuitivas ou facilmente dedutíveis.
-- Não crie cards excessivamente longos.
-- Não invente informações que não estejam no material enviado.
-- Não misture múltiplos conceitos independentes no mesmo card.
-- Não gere cards apenas para aumentar volume.
-- Se o material tiver pouca coisa realmente memorizável dentro do tema definido, gere poucos cards ou até nenhum.
-- Restrinja os flashcards ao TEMA DO DECK. Ignore informações fora do tema, mesmo que sejam high-yield.
+- A explicacao deve ser breve, focada no motivo pelo qual o item e relevante para prova.
+- Use linguagem medica precisa.
+- Evite cards de raciocinio clinico amplo.
+- Evite perguntas vagas como "qual a conduta?" sem cenario especifico.
+- Nao crie cards sobre informacoes obvias, intuitivas ou facilmente dedutiveis.
+- Nao crie cards excessivamente longos.
+- Nao invente informacoes que nao estejam no material enviado.
+- Nao misture multiplos conceitos independentes no mesmo card.
+- Nao gere cards apenas para aumentar volume.
+- Se o material tiver pouca coisa realmente memorizavel, gere poucos cards ou ate nenhum.
 
 REGRAS DE HTML:
 - Todos os campos do CSV podem conter HTML.
@@ -241,45 +472,45 @@ REGRAS DE HTML:
 - A RESPOSTA pode usar <p> ou <ul>, mas deve ser sempre direta.
 - Use <p> para respostas curtas.
 - Use <ul><li>...</li></ul> apenas quando a resposta exigir lista.
-- A EXPLICAÇÃO também deve estar em HTML, preferencialmente em <p>.
+- A EXPLICACAO tambem deve estar em HTML, preferencialmente em <p>.
 - A FONTE deve estar obrigatoriamente em HTML.
-- Escape aspas duplas internas conforme necessário para manter o CSV válido.
+- Escape aspas duplas internas conforme necessario para manter o CSV valido.
 
-MODELO OBRIGATÓRIO DA FONTE:
-<div class="quote">
-    <div class="title">
-        [Título padronizado da fonte]
-    </div>
-    <hr>
-    <div class="reference">
-        <img src="Med_[TipoDaFonte]_[TituloOuIdentificador]-[PaginaVisual].jpg">
-    </div>
-    <hr>
-    <div class="source">
-        [Autores ou sociedade responsável]. ([Ano]). <i>[Título completo]</i>. [Periódico, livro, guideline, sociedade, editora ou instituição, se disponível].
-    </div>
-</div>
+MODELO OBRIGATORIO DA FONTE:
+${sourceHtmlTemplate}
 
 REGRAS PARA PREENCHER A FONTE:
 - Cite a fonte em todos os flashcards.
-- Use como base prioritária os dados bibliográficos definidos pelo usuário acima.
-- Não coloque página no texto da referência bibliográfica.
+- Use como base prioritaria os dados bibliograficos definidos pelo usuario acima.
+- Nao coloque pagina no texto da referencia bibliografica.
+- Se Periodico/Editora/Instituicao estiver em branco, termine a fonte logo apos </i>. Nao invente nem repita a instituicao.
+- Use exatamente o HTML acima como modelo base da FONTE.
+- Nao reescreva titulo, autores, ano, titulo completo, instituicao, tipo da fonte nem identificador da imagem.
+- A unica parte que deve mudar em cada flashcard e [PaginaVisual] dentro de <img src="">, trocando pelo numero visual correto da pagina, como 01, 02, 03.
+- O valor dentro de <img src=""> deve ficar exatamente no formato Med_${sourceType}_${sourceSlug}-[PaginaVisual].jpg, alterando apenas [PaginaVisual].
 
-SAÍDA:
-- Gere um arquivo .csv válido.
-- Use codificação UTF-8.
-- A primeira linha deve ser o cabeçalho:
-PERGUNTA,DICA,RESPOSTA,EXPLICAÇÃO,FONTE
+SAIDA:
+- Gere um arquivo .csv valido.
+- Use codificacao UTF-8.
+- A primeira linha deve ser o cabecalho:
+PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
 - Cada flashcard deve ocupar uma linha.
 - Coloque todos os campos entre aspas duplas.
 - Escape aspas duplas internas duplicando-as.
-- Não escreva comentários fora do CSV.
-- Não explique o que você fez; entregue apenas o CSV.
+- Nao escreva comentarios fora do CSV.
+- Nao explique o que voce fez; entregue apenas o CSV.
+`.trim();
 
-Agora gere o CSV a partir do material abaixo. Use somente informações presentes nas páginas fornecidas.
+  const contentPrompt = `
+Agora gere o CSV a partir do material abaixo. Use somente informacoes presentes nas paginas fornecidas.
 
 ${pageBlocks}
 `.trim();
+
+  return {
+    instructionPrompt,
+    contentPrompt,
+  };
 }
 
 async function cleanupPdf(pdf, loadingTask) {
@@ -320,6 +551,49 @@ function slugify(value) {
     || 'Fonte';
 }
 
+function buildSourceTitle(sourceType, sourceName) {
+  if (sourceType === 'FRMW2026') {
+    return `Ficha Resumo da Medway 2026: ${sourceName}`;
+  }
+  if (sourceType === 'AMW2026') {
+    return `Apostila da Medway 2026: ${sourceName}`;
+  }
+  return sourceName;
+}
+
+function buildSourceLine({ sourceType, sourceName, authors, year, title, container }) {
+  const finalAuthors = String(authors ?? '').trim() || defaultAuthors(sourceType);
+  const finalYear = String(year ?? '').trim() || defaultYear(sourceType);
+  const finalTitle = String(title ?? '').trim() || defaultTitle(sourceType, sourceName);
+  const finalContainer = String(container ?? '').trim();
+  const containerSuffix = finalContainer ? ` ${finalContainer}.` : '';
+  return `${finalAuthors}. (${finalYear}). <i>${finalTitle}</i>.${containerSuffix}`;
+}
+
+function defaultAuthors(sourceType) {
+  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
+    return 'Medway';
+  }
+  return '[Autor nao informado]';
+}
+
+function defaultYear(sourceType) {
+  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
+    return '2026';
+  }
+  return '[Ano nao informado]';
+}
+
+function defaultTitle(sourceType, sourceName) {
+  if (sourceType === 'FRMW2026') {
+    return `Ficha Resumo da Medway 2026: ${sourceName}`;
+  }
+  if (sourceType === 'AMW2026') {
+    return `Apostila da Medway 2026: ${sourceName}`;
+  }
+  return sourceName;
+}
+
 function mapLoadProgress(loaded, total) {
   if (!total) {
     return 10;
@@ -347,6 +621,14 @@ function formatBytes(bytes) {
   return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
 }
 
+function isFileUrl(value) {
+  try {
+    return new URL(value).protocol === 'file:';
+  } catch {
+    return false;
+  }
+}
+
 function getErrorMessage(error) {
   if (error instanceof Error) {
     return error.message;
@@ -357,4 +639,10 @@ function getErrorMessage(error) {
   }
 
   return 'Erro inesperado.';
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
 }

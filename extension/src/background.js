@@ -6,13 +6,24 @@ chrome.runtime.onInstalled.addListener(() => {
   void configureSidePanel();
 });
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.target !== 'background') {
     return;
   }
 
   if (message.type === 'START_PROMPT') {
     void startPrompt(message.payload);
+  }
+
+  if (message.type === 'DOWNLOAD_FILE') {
+    void downloadFile(message.payload)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error) => {
+        sendResponse({ ok: false, message: getErrorMessage(error) });
+      });
+    return true;
   }
 });
 
@@ -58,8 +69,8 @@ async function ensureOffscreenDocument() {
     creatingOffscreen = chrome.offscreen
       .createDocument({
         url: OFFSCREEN_PATH,
-        reasons: ['DOM_PARSER', 'WORKERS'],
-        justification: 'Ler PDFs com PDF.js e gerar prompt de flashcards fora da sidebar.',
+        reasons: ['BLOBS', 'WORKERS'],
+        justification: 'Ler PDFs com PDF.js, renderizar imagens e gerar prompt de flashcards fora da sidebar.',
       })
       .finally(() => {
         creatingOffscreen = null;
@@ -96,6 +107,22 @@ function getErrorMessage(error) {
   }
 
   return 'Erro inesperado.';
+}
+
+async function downloadFile(payload) {
+  const url = payload?.url || payload?.downloadUrl;
+  const filename = payload?.filename;
+
+  if (!url || !filename) {
+    throw new Error('Arquivo para download invalido.');
+  }
+
+  await chrome.downloads.download({
+    url,
+    filename,
+    saveAs: false,
+    conflictAction: 'uniquify',
+  });
 }
 
 function postRuntimeMessage(message) {

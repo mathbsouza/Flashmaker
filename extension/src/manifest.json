@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "FlashMaker",
+  "short_name": "FlashMaker",
   "version": "1.0.0",
-  "description": "Extraia páginas de um PDF aberto e gere um prompt de flashcards na sidebar.",
+  "description": "Transforme paginas de um PDF aberto no Chrome em um prompt para gerar flashcards.",
+  "minimum_chrome_version": "116",
   "action": {
     "default_title": "FlashMaker"
   },

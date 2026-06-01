@@ -7,25 +7,36 @@ import {
 } from './shared.js';
 
 const DEFAULT_DPI = 150;
-const SOURCE_TYPES = ['Livro', 'Capitulo', 'Artigos', 'Guidelines', 'FRMW2026', 'AMW2026', 'UTD'];
+const SOURCE_TYPES = [
+  { value: 'FRMW2026', label: 'Ficha Resumo da Medway' },
+  { value: 'AMW2026', label: 'Apostila da Medway' },
+  { value: 'Livro', label: 'Livro' },
+  { value: 'Artigos', label: 'Artigo' },
+  { value: 'Guidelines', label: 'Guideline' },
+  { value: 'UTD', label: 'UpToDate' },
+  { value: 'Outros', label: 'Outros' },
+];
 
 const elements = {
   pdfState: document.getElementById('pdfState'),
   pdfHint: document.getElementById('pdfHint'),
-  sourceName: document.getElementById('sourceName'),
-  theme: document.getElementById('theme'),
   sourceType: document.getElementById('sourceType'),
   dpi: document.getElementById('dpi'),
+  sourceName: document.getElementById('sourceName'),
+  imageIdentifier: document.getElementById('imageIdentifier'),
   sourceAuthors: document.getElementById('sourceAuthors'),
   sourceYear: document.getElementById('sourceYear'),
   sourceTitle: document.getElementById('sourceTitle'),
   sourceContainer: document.getElementById('sourceContainer'),
   pageStart: document.getElementById('pageStart'),
   pageEnd: document.getElementById('pageEnd'),
+  allPages: document.getElementById('allPages'),
   runButton: document.getElementById('runButton'),
-  copyPromptButton: document.getElementById('copyPromptButton'),
+  copyInstructionPromptButton: document.getElementById('copyInstructionPromptButton'),
+  copyContentPromptButton: document.getElementById('copyContentPromptButton'),
   sourcePreview: document.getElementById('sourcePreview'),
-  promptOutput: document.getElementById('promptOutput'),
+  instructionPromptOutput: document.getElementById('instructionPromptOutput'),
+  contentPromptOutput: document.getElementById('contentPromptOutput'),
   statusText: document.getElementById('statusText'),
   progressBar: document.getElementById('progressBar'),
   progressText: document.getElementById('progressText'),
@@ -34,7 +45,9 @@ const elements = {
 let currentPdfUrl = '';
 let currentTabId = null;
 let currentJobId = null;
-let promptText = '';
+let currentPdfBaseName = '';
+let instructionPromptText = '';
+let contentPromptText = '';
 
 document.addEventListener('DOMContentLoaded', () => {
   void initialize();
@@ -52,15 +65,29 @@ function bindEvents() {
     void startPromptGeneration();
   });
 
-  elements.copyPromptButton.addEventListener('click', () => {
-    void copyPrompt();
+  elements.copyInstructionPromptButton.addEventListener('click', () => {
+    void copyPrompt(instructionPromptText, 'Gere o prompt de instrucoes antes de copiar.');
+  });
+
+  elements.copyContentPromptButton.addEventListener('click', () => {
+    void copyPrompt(contentPromptText, 'Gere o prompt com conteudo antes de copiar.');
+  });
+
+  elements.sourceType.addEventListener('change', () => {
+    handleSourceTypeChange();
+    persistSettings();
+    updateSourcePreview();
+  });
+
+  elements.allPages.addEventListener('change', () => {
+    syncPageRangeState();
+    persistSettings();
   });
 
   for (const input of [
-    elements.sourceName,
-    elements.theme,
-    elements.sourceType,
     elements.dpi,
+    elements.sourceName,
+    elements.imageIdentifier,
     elements.sourceAuthors,
     elements.sourceYear,
     elements.sourceTitle,
@@ -115,13 +142,15 @@ function bindEvents() {
     }
 
     if (message?.type === 'FLASHMARKER_DONE') {
-      promptText = message.payload?.prompt ?? '';
-      elements.promptOutput.value = promptText;
-      setStatus(message.message ?? 'Prompt pronto.');
+      instructionPromptText = message.payload?.instructionPrompt ?? '';
+      contentPromptText = message.payload?.contentPrompt ?? '';
+      elements.instructionPromptOutput.value = instructionPromptText;
+      elements.contentPromptOutput.value = contentPromptText;
+      setStatus(message.message ?? 'Prompts prontos.');
       setProgress(100, message.progressText ?? 'Concluido');
       setBusy(false);
       currentJobId = null;
-      void persistPrompt(promptText);
+      void persistPrompts();
       void refreshActivePdf();
     }
   });
@@ -129,7 +158,7 @@ function bindEvents() {
 
 function fillSourceTypes() {
   elements.sourceType.innerHTML = SOURCE_TYPES
-    .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`)
+    .map(({ value, label }) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
     .join('');
 }
 
@@ -158,17 +187,21 @@ async function refreshActivePdf() {
     elements.runButton.disabled = false;
 
     const fileName = deriveBaseNameFromPdfUrl(pdfUrl) || deriveBaseNameFromTitle(tab.title) || 'PDF aberto';
+    currentPdfBaseName = fileName;
     elements.pdfState.textContent = safeDecodeURIComponent(fileName);
     elements.pdfHint.textContent = pdfUrl.startsWith('file:') ? 'PDF local' : 'PDF remoto';
 
+    if (!elements.imageIdentifier.value.trim()) {
+      elements.imageIdentifier.value = inferImageIdentifier(fileName);
+    }
+
     if (!elements.sourceName.value.trim()) {
-      const inferredSourceName = humanizeBaseName(fileName);
-      const inferredType = inferSourceType(fileName);
-      applyInferredValues(inferredSourceName, inferredType);
+      applyDefaults(inferSourceType(fileName), humanizeBaseName(fileName));
     }
   } catch (error) {
     currentPdfUrl = '';
     currentTabId = null;
+    currentPdfBaseName = '';
     elements.runButton.disabled = true;
     elements.pdfState.textContent = 'Nenhum PDF selecionado';
     elements.pdfHint.textContent = getErrorMessage(error);
@@ -177,15 +210,35 @@ async function refreshActivePdf() {
   }
 }
 
-function applyInferredValues(sourceName, sourceType) {
-  elements.sourceName.value = sourceName;
-  elements.theme.value = sourceName;
+function handleSourceTypeChange() {
+  if (elements.sourceType.value === 'Outros') {
+    clearSourceFields();
+    return;
+  }
+
+  applyDefaults(elements.sourceType.value, elements.sourceName.value.trim());
+}
+
+function applyDefaults(sourceType, sourceName) {
   elements.sourceType.value = sourceType;
+  elements.sourceName.value = sourceName;
+  if (!elements.imageIdentifier.value.trim()) {
+    elements.imageIdentifier.value = inferImageIdentifier(currentPdfBaseName || sourceName);
+  }
   elements.sourceAuthors.value = defaultAuthors(sourceType);
   elements.sourceYear.value = defaultYear(sourceType);
   elements.sourceTitle.value = defaultTitle(sourceType, sourceName);
   elements.sourceContainer.value = defaultContainer(sourceType);
   updateSourcePreview();
+}
+
+function clearSourceFields() {
+  elements.sourceName.value = '';
+  elements.imageIdentifier.value = '';
+  elements.sourceAuthors.value = '';
+  elements.sourceYear.value = '';
+  elements.sourceTitle.value = '';
+  elements.sourceContainer.value = '';
 }
 
 async function startPromptGeneration() {
@@ -197,33 +250,36 @@ async function startPromptGeneration() {
     const payload = {
       jobId: crypto.randomUUID(),
       pdfUrl: currentPdfUrl,
-      sourceName: elements.sourceName.value.trim(),
-      theme: elements.theme.value.trim(),
+      imageIdentifier: elements.imageIdentifier.value.trim(),
       sourceType: elements.sourceType.value,
       dpi: parsePositiveInt(elements.dpi.value || DEFAULT_DPI, 'Qualidade da imagem'),
+      sourceName: elements.sourceName.value.trim(),
       sourceAuthors: elements.sourceAuthors.value.trim(),
       sourceYear: elements.sourceYear.value.trim(),
       sourceTitle: elements.sourceTitle.value.trim(),
       sourceContainer: elements.sourceContainer.value.trim(),
       pageStart: parsePositiveInt(elements.pageStart.value, 'Pagina inicial'),
       pageEnd: parsePositiveInt(elements.pageEnd.value, 'Pagina final'),
+      allPages: elements.allPages.checked,
     };
 
     if (!payload.sourceName) {
       throw new Error('Preencha Source name.');
     }
 
-    if (!payload.theme) {
-      throw new Error('Preencha Tema do deck.');
+    if (!payload.imageIdentifier) {
+      throw new Error('Preencha Identificador da imagem.');
     }
 
-    if (payload.pageStart > payload.pageEnd) {
+    if (!payload.allPages && payload.pageStart > payload.pageEnd) {
       throw new Error('Pagina inicial precisa ser menor ou igual a final.');
     }
 
     currentJobId = payload.jobId;
-    promptText = '';
-    elements.promptOutput.value = '';
+    instructionPromptText = '';
+    contentPromptText = '';
+    elements.instructionPromptOutput.value = '';
+    elements.contentPromptOutput.value = '';
     setBusy(true);
     setStatus('Preparando...');
     setProgress(4, '');
@@ -242,21 +298,21 @@ async function startPromptGeneration() {
   }
 }
 
-async function copyPrompt() {
-  if (!promptText.trim()) {
-    setStatus('Gere o prompt antes de copiar.');
+async function copyPrompt(value, emptyMessage) {
+  if (!value.trim()) {
+    setStatus(emptyMessage);
     return;
   }
 
-  await navigator.clipboard.writeText(promptText);
+  await navigator.clipboard.writeText(value);
   setStatus('Prompt copiado.');
 }
 
 function updateSourcePreview() {
   const sourceName = elements.sourceName.value.trim() || '[Source name]';
-  const sourceType = elements.sourceType.value || 'Artigos';
+  const sourceType = elements.sourceType.value || 'Outros';
   const pageValue = normalizePreviewPage(elements.pageStart.value || '1');
-  const sourceSlug = slugify(sourceName);
+  const sourceSlug = slugify(elements.imageIdentifier.value.trim() || inferImageIdentifier(currentPdfBaseName || sourceName));
   const title = buildSourceTitle(sourceType, sourceName);
   const sourceLine = buildSourceLine({
     sourceType,
@@ -293,21 +349,32 @@ function parsePositiveInt(value, label) {
 
 function setBusy(isBusy) {
   elements.runButton.disabled = isBusy || !currentPdfUrl;
-  elements.copyPromptButton.disabled = isBusy;
+  elements.copyInstructionPromptButton.disabled = isBusy;
+  elements.copyContentPromptButton.disabled = isBusy;
   for (const input of [
-    elements.sourceName,
-    elements.theme,
     elements.sourceType,
     elements.dpi,
+    elements.sourceName,
+    elements.imageIdentifier,
     elements.sourceAuthors,
     elements.sourceYear,
     elements.sourceTitle,
     elements.sourceContainer,
     elements.pageStart,
     elements.pageEnd,
+    elements.allPages,
   ]) {
     input.disabled = isBusy;
   }
+  if (!isBusy) {
+    syncPageRangeState();
+  }
+}
+
+function syncPageRangeState() {
+  const useAllPages = elements.allPages.checked;
+  elements.pageStart.disabled = useAllPages || Boolean(currentJobId);
+  elements.pageEnd.disabled = useAllPages || Boolean(currentJobId);
 }
 
 function setStatus(message) {
@@ -324,15 +391,19 @@ function applySettings(settings) {
   elements.dpi.value = settings.dpi ?? DEFAULT_DPI;
   elements.pageStart.value = settings.pageStart ?? 1;
   elements.pageEnd.value = settings.pageEnd ?? 1;
+  elements.allPages.checked = Boolean(settings.allPages);
+  elements.sourceType.value = settings.sourceType ?? 'FRMW2026';
   elements.sourceName.value = settings.sourceName ?? '';
-  elements.theme.value = settings.theme ?? '';
-  elements.sourceType.value = settings.sourceType ?? 'Artigos';
+  elements.imageIdentifier.value = settings.imageIdentifier ?? '';
   elements.sourceAuthors.value = settings.sourceAuthors ?? '';
   elements.sourceYear.value = settings.sourceYear ?? '';
   elements.sourceTitle.value = settings.sourceTitle ?? '';
   elements.sourceContainer.value = settings.sourceContainer ?? '';
-  elements.promptOutput.value = settings.promptText ?? '';
-  promptText = settings.promptText ?? '';
+  elements.instructionPromptOutput.value = settings.instructionPromptText ?? '';
+  elements.contentPromptOutput.value = settings.contentPromptText ?? '';
+  instructionPromptText = settings.instructionPromptText ?? '';
+  contentPromptText = settings.contentPromptText ?? '';
+  syncPageRangeState();
   updateSourcePreview();
 }
 
@@ -350,22 +421,25 @@ function persistSettings() {
     dpi: elements.dpi.value,
     pageStart: elements.pageStart.value,
     pageEnd: elements.pageEnd.value,
-    sourceName: elements.sourceName.value,
-    theme: elements.theme.value,
+    allPages: elements.allPages.checked,
     sourceType: elements.sourceType.value,
+    sourceName: elements.sourceName.value,
+    imageIdentifier: elements.imageIdentifier.value,
     sourceAuthors: elements.sourceAuthors.value,
     sourceYear: elements.sourceYear.value,
     sourceTitle: elements.sourceTitle.value,
     sourceContainer: elements.sourceContainer.value,
-    promptText,
+    instructionPromptText,
+    contentPromptText,
   }).catch(() => {});
 }
 
-async function persistPrompt(value) {
+async function persistPrompts() {
   const settings = await loadSettings();
   await saveSettings({
     ...settings,
-    promptText: value,
+    instructionPromptText,
+    contentPromptText,
   });
 }
 
@@ -382,19 +456,30 @@ function inferSourceType(fileName) {
   if (/^Med_Livro_/i.test(fileName) || /^Med_Livros_/i.test(fileName)) {
     return 'Livro';
   }
-  if (/^Med_Capitulo_/i.test(fileName)) {
-    return 'Capitulo';
-  }
   if (/^Med_Guideline_/i.test(fileName) || /^Med_Guidelines_/i.test(fileName)) {
     return 'Guidelines';
   }
-  return 'Artigos';
+  if (/^Med_Artigo_/i.test(fileName) || /^Med_Artigos_/i.test(fileName)) {
+    return 'Artigos';
+  }
+  return 'FRMW2026';
 }
 
 function humanizeBaseName(fileName) {
   return String(fileName)
     .replace(/^Med_[^_]+_/i, '')
     .replace(/-/g, ' ')
+    .trim();
+}
+
+function inferImageIdentifier(fileName) {
+  const matched = String(fileName).match(/^Med_[^_]+_(.+)$/i);
+  if (matched?.[1]) {
+    return matched[1];
+  }
+
+  return String(fileName)
+    .replace(/\.pdf$/i, '')
     .trim();
 }
 
@@ -431,22 +516,23 @@ function buildSourceLine({ sourceType, sourceName, authors, year, title, contain
   const finalAuthors = authors || defaultAuthors(sourceType);
   const finalYear = year || defaultYear(sourceType);
   const finalTitle = title || defaultTitle(sourceType, sourceName);
-  const finalContainer = container || defaultContainer(sourceType);
-  return `${finalAuthors}. (${finalYear}). <i>${finalTitle}</i>. ${finalContainer}.`;
+  const finalContainer = container.trim();
+  const containerSuffix = finalContainer ? ` ${finalContainer}.` : '';
+  return `${finalAuthors}. (${finalYear}). <i>${finalTitle}</i>.${containerSuffix}`;
 }
 
 function defaultAuthors(sourceType) {
   if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
     return 'Medway';
   }
-  return '[Autor não informado]';
+  return '';
 }
 
 function defaultYear(sourceType) {
   if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
     return '2026';
   }
-  return '[Ano não informado]';
+  return '';
 }
 
 function defaultTitle(sourceType, sourceName) {
@@ -460,13 +546,10 @@ function defaultTitle(sourceType, sourceName) {
 }
 
 function defaultContainer(sourceType) {
-  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
-    return 'Medway';
-  }
   if (sourceType === 'UTD') {
     return 'UpToDate';
   }
-  return '[Fonte não informada]';
+  return '';
 }
 
 function escapeHtml(value) {
