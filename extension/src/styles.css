@@ -1,12 +1,17 @@
 :root {
   color-scheme: dark;
-  --bg: #050505;
-  --panel: #0d0d0d;
-  --panel-2: #121212;
-  --line: #212121;
-  --text: #f3f3f3;
-  --muted: #9a9a9a;
-  --success: #7dd3a4;
+  --bg: #080806;
+  --panel: #11110f;
+  --panel-2: #171713;
+  --panel-3: #1d1c17;
+  --line: #292820;
+  --line-strong: #3b382e;
+  --text: #f6f1e7;
+  --muted: #aaa295;
+  --accent: #d7ff72;
+  --accent-ink: #161805;
+  --success: #8ee6ad;
+  --shadow: 0 14px 45px rgb(0 0 0 / 0.28);
 }
 
 * {
@@ -26,6 +31,9 @@ body {
 
 body {
   padding: 14px;
+  background:
+    radial-gradient(circle at 20% 0%, rgb(215 255 114 / 0.09), transparent 30%),
+    linear-gradient(180deg, #0d0c09, var(--bg));
 }
 
 .shell {
@@ -37,13 +45,38 @@ body {
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 14px;
   padding: 16px;
+  box-shadow: var(--shadow);
 }
 
 .hero {
   display: grid;
   gap: 8px;
+  background:
+    linear-gradient(135deg, rgb(215 255 114 / 0.08), transparent 42%),
+    var(--panel);
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.brand-mark,
+.title-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel-3);
 }
 
 .app {
@@ -60,7 +93,7 @@ p {
 }
 
 h1 {
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   line-height: 1.1;
 }
 
@@ -83,6 +116,9 @@ h1 {
 }
 
 .section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.88rem;
   font-weight: 600;
 }
@@ -110,6 +146,7 @@ h1 {
 .field span {
   color: var(--muted);
   font-size: 0.78rem;
+  font-weight: 650;
 }
 
 .readout,
@@ -126,7 +163,7 @@ input,
 select,
 textarea {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--panel-2);
   color: var(--text);
 }
@@ -149,23 +186,58 @@ select,
 textarea {
   padding: 12px 14px;
   outline: none;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  background: #1b1b15;
+  box-shadow: 0 0 0 3px rgb(215 255 114 / 0.12);
 }
 
 button {
   border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #ffffff;
-  color: #090909;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-weight: 600;
   cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, opacity 140ms ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+button span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.primary-action,
+.secondary-action,
+button.ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 button.ghost {
   width: auto;
   min-height: 36px;
-  padding: 0 12px;
-  background: transparent;
-  color: var(--muted);
+  padding: 0 11px;
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.secondary-action {
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--line-strong);
 }
 
 button:disabled,
@@ -198,7 +270,7 @@ textarea {
 }
 
 .bar {
-  height: 4px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: #171717;
@@ -207,6 +279,10 @@ textarea {
 #progressBar {
   width: 0%;
   height: 100%;
-  background: #ffffff;
+  background: var(--accent);
   transition: width 160ms ease;
+}
+
+.footer-actions {
+  padding: 12px;
 }

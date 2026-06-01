@@ -4,6 +4,11 @@ import {
   buildZipName,
   parsePageRange,
 } from './shared.js';
+import {
+  buildSourceTemplateContext,
+  getSourceTemplate,
+  renderSourceTemplate,
+} from './source-templates.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('pdf.worker.min.mjs');
 
@@ -52,8 +57,7 @@ async function generatePrompt(payload) {
     const sourceName = String(payload.sourceName ?? '').trim();
     const sourceType = String(payload.sourceType ?? '').trim() || 'Outros';
     const imageIdentifier = String(payload.imageIdentifier ?? '').trim() || sourceName;
-    const sourceSlug = slugify(imageIdentifier);
-    const imageBaseName = `Med_${sourceType}_${sourceSlug}`;
+    const imageBaseName = buildTemplateImageBaseName(sourceType, sourceName, imageIdentifier);
     const pagePadding = Math.max(2, String(totalPages).length);
     const dpi = Number.isInteger(Number(payload.dpi)) && Number(payload.dpi) > 0
       ? Number(payload.dpi)
@@ -98,17 +102,18 @@ async function generatePrompt(payload) {
       await yieldToBrowser();
     }
 
-    emitStatus('Gerando ZIP das imagens...', 88, `${pages.length} JPG`);
+    emitStatus('Preparando ZIP das imagens...', 88, `${pages.length} JPG`);
     const zipBlob = await zip.generateAsync({
       type: 'blob',
       compression: 'STORE',
     });
-    await downloadBlob(zipBlob, buildZipName(imageBaseName));
+    const imageZip = createDownloadBlob(zipBlob, buildZipName(imageBaseName));
 
     emitStatus('Montando prompts...', 94, 'Texto final');
     const prompts = buildPrompts({
       sourceName,
-      sourceSlug,
+      imageBaseName,
+      imageIdentifier,
       sourceType,
       bibliography: {
         authors: String(payload.sourceAuthors ?? '').trim(),
@@ -125,10 +130,19 @@ async function generatePrompt(payload) {
     chrome.runtime.sendMessage({
       type: 'FLASHMARKER_DONE',
       jobId: activeJobId,
-      message: 'Prompts prontos e imagens baixadas.',
+      message: 'Prompts prontos.',
       progress: 100,
       progressText: 'Concluido',
-      payload: prompts,
+      payload: {
+        ...prompts,
+        promptData: {
+          totalPages,
+          pageStart: selectedPages[0],
+          pageEnd: selectedPages.at(-1),
+          pages,
+        },
+        imageZip,
+      },
     });
   } catch (error) {
     emitError(activeJobId, getErrorMessage(error));
@@ -345,26 +359,10 @@ function canvasToBlob(canvas, type, quality) {
   });
 }
 
-async function downloadBlob(blob, filename) {
+function createDownloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   pendingDownloadUrls.add(url);
-  const response = await chrome.runtime.sendMessage({
-    target: 'background',
-    type: 'DOWNLOAD_FILE',
-    payload: {
-      filename,
-      downloadUrl: url,
-    },
-  });
-
-  if (!response?.ok) {
-    revokeDownloadUrl(url);
-    throw new Error(response?.message || 'Nao foi possivel baixar o ZIP de imagens.');
-  }
-
-  setTimeout(() => {
-    revokeDownloadUrl(url);
-  }, 60_000);
+  return { filename, downloadUrl: url };
 }
 
 function revokeDownloadUrl(downloadUrl) {
@@ -377,7 +375,8 @@ function revokeDownloadUrl(downloadUrl) {
 
 function buildPrompts({
   sourceName,
-  sourceSlug,
+  imageBaseName,
+  imageIdentifier,
   sourceType,
   bibliography,
   totalPages,
@@ -389,6 +388,7 @@ function buildPrompts({
   const sourceLine = buildSourceLine({
     sourceType,
     sourceName,
+    imageIdentifier,
     authors: bibliography.authors,
     year: bibliography.year,
     title: bibliography.title,
@@ -400,7 +400,7 @@ function buildPrompts({
     </div>
     <hr>
     <div class="reference">
-        <img src="Med_${sourceType}_${sourceSlug}-[PaginaVisual].jpg">
+        <img src="${imageBaseName}-[PaginaVisual].jpg">
     </div>
     <hr>
     <div class="source">
@@ -420,89 +420,55 @@ function buildPrompts({
     .join('\n\n');
 
   const instructionPrompt = `
-Voce e um especialista em educacao medica e criacao de flashcards para provas de residencia medica/R3.
+Voce e um especialista em flashcards para provas de residencia medica/R3.
 
-Vou enviar um artigo, guideline, capitulo, resumo, ficha-resumo, apostila ou material de estudo em PDF ou texto. Sua tarefa e gerar um arquivo CSV com poucos flashcards do tipo BASIC, voltados exclusivamente para MEMORIZACAO intensiva de itens high-yield.
+Quando eu enviar o material, gere poucos flashcards BASIC em CSV, apenas com informacoes high-yield que precisem ser memorizadas. Priorize cortes, criterios, tempos, excecoes, indicacoes, contraindicoes, sequencias, testes de escolha, definicoes operacionais e detalhes literais de prova.
 
-OBJETIVO:
-Criar flashcards apenas sobre informacoes que precisam ser decoradas para prova e que nao seriam facilmente aprendidas apenas pela resolucao de questoes. Priorize dados objetivos, cortes, criterios, tempos, excecoes, indicacoes formais, contraindicacoes, sequencias terapeuticas, testes preferenciais, definicoes operacionais e detalhes faceis de esquecer.
+Evite:
+- raciocinio clinico amplo;
+- perguntas vagas;
+- informacoes obvias ou dedutiveis;
+- cards longos;
+- inventar dados ausentes;
+- misturar varios conceitos no mesmo card.
 
-CONTEXTO DE ENTRADA:
-- Tipo da fonte ja determinado: ${sourceType}
-- Source name obrigatorio definido pelo usuario: ${sourceName}
-- Identificador obrigatorio para o nome das imagens: ${sourceSlug}
-- Referencia bibliografica base definida pelo usuario:
-  - Autores/sociedade: ${bibliography.authors || '[Autor nao informado]'}
-  - Ano: ${bibliography.year || '[Ano nao informado]'}
-  - Titulo do livro/artigo: ${bibliography.title || sourceName}
-  - Periodico/Editora/Instituicao: ${bibliography.container || '[em branco]'}
-- Paginas visuais selecionadas do PDF: ${pageStart}-${pageEnd}
-- Total de paginas do PDF: ${totalPages}
-
-REGRA ADICIONAL OBRIGATORIA SOBRE SOURCE NAME:
-- Use o source name definido pelo usuario como base obrigatoria do titulo padronizado da fonte e do identificador [TituloOuIdentificador].
-- Nao substitua esse nome por outro mais curto.
-- Preserve o source name como referencia principal mesmo se o PDF trouxer outro titulo interno, exceto quando as regras especiais de FRMW2026, AMW2026 ou UTD exigirem prefixos especificos.
-- Para o campo <img src="">, use obrigatoriamente o identificador ${sourceSlug}.
-
-FORMATO OBRIGATORIO DO CSV:
+Formato do CSV:
 PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
 
-REGRAS GERAIS:
-- Gere poucos flashcards.
-- Cada flashcard deve testar uma unica informacao principal.
-- Os flashcards devem ser do tipo BASIC.
-- A pergunta deve ser direta.
-- A dica deve ajudar sem entregar a resposta.
-- A resposta deve ser objetiva e curta.
-- A explicacao deve ser breve, focada no motivo pelo qual o item e relevante para prova.
-- Use linguagem medica precisa.
-- Evite cards de raciocinio clinico amplo.
-- Evite perguntas vagas como "qual a conduta?" sem cenario especifico.
-- Nao crie cards sobre informacoes obvias, intuitivas ou facilmente dedutiveis.
-- Nao crie cards excessivamente longos.
-- Nao invente informacoes que nao estejam no material enviado.
-- Nao misture multiplos conceitos independentes no mesmo card.
-- Nao gere cards apenas para aumentar volume.
-- Se o material tiver pouca coisa realmente memorizavel, gere poucos cards ou ate nenhum.
+Regras dos campos:
+- Todos os campos devem conter HTML.
+- PERGUNTA: direta, testando uma unica informacao, em HTML.
+- DICA: curta, sem entregar a resposta, em HTML.
+- RESPOSTA: em HTML, usando <p> ou <ul><li>.
+- Em listas HTML, use ponto e virgula ao fim dos itens intermediarios e ponto final no ultimo item.
+- EXPLICACAO: em HTML, preferencialmente <p>, com explicacao densa de cerca de 5 linhas.
+- Na EXPLICACAO, va alem de repetir o material: contextualize com conhecimento medico consolidado, fisiopatologia, implicacao pratica ou motivo de prova.
+- Nao comece a EXPLICACAO com frases como "No material", "O material diz", "Segundo o texto" ou equivalentes.
+- A resposta cobrada deve estar presente no material; o conhecimento externo deve apenas explicar e contextualizar.
+- FONTE: sempre HTML, gerada pela funcao fonte(paginaVisual).
 
-REGRAS DE HTML:
-- Todos os campos do CSV podem conter HTML.
-- A RESPOSTA deve estar sempre em HTML.
-- A RESPOSTA pode usar <p> ou <ul>, mas deve ser sempre direta.
-- Use <p> para respostas curtas.
-- Use <ul><li>...</li></ul> apenas quando a resposta exigir lista.
-- A EXPLICACAO tambem deve estar em HTML, preferencialmente em <p>.
-- A FONTE deve estar obrigatoriamente em HTML.
-- Escape aspas duplas internas conforme necessario para manter o CSV valido.
-
-MODELO OBRIGATORIO DA FONTE:
+Use este template uma unica vez para gerar a coluna FONTE:
 ${sourceHtmlTemplate}
 
-REGRAS PARA PREENCHER A FONTE:
-- Cite a fonte em todos os flashcards.
-- Use como base prioritaria os dados bibliograficos definidos pelo usuario acima.
-- Nao coloque pagina no texto da referencia bibliografica.
-- Se Periodico/Editora/Instituicao estiver em branco, termine a fonte logo apos </i>. Nao invente nem repita a instituicao.
-- Use exatamente o HTML acima como modelo base da FONTE.
-- Nao reescreva titulo, autores, ano, titulo completo, instituicao, tipo da fonte nem identificador da imagem.
-- A unica parte que deve mudar em cada flashcard e [PaginaVisual] dentro de <img src="">, trocando pelo numero visual correto da pagina, como 01, 02, 03.
-- O valor dentro de <img src=""> deve ficar exatamente no formato Med_${sourceType}_${sourceSlug}-[PaginaVisual].jpg, alterando apenas [PaginaVisual].
+Defina mentalmente ou em codigo:
+fonte(paginaVisual) = template acima com [PaginaVisual] substituido por paginaVisual.
 
-SAIDA:
-- Gere um arquivo .csv valido.
-- Use codificacao UTF-8.
-- A primeira linha deve ser o cabecalho:
-PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
-- Cada flashcard deve ocupar uma linha.
-- Coloque todos os campos entre aspas duplas.
-- Escape aspas duplas internas duplicando-as.
-- Nao escreva comentarios fora do CSV.
-- Nao explique o que voce fez; entregue apenas o CSV.
+Regras da fonte:
+- A unica parte variavel da fonte entre flashcards e [PaginaVisual].
+- Use pagina visual do PDF/material, como 01, 02, 03.
+- Nao coloque pagina no texto bibliografico da <div class="source">.
+- O src da imagem deve ficar exatamente: ${imageBaseName}-[PaginaVisual].jpg.
+
+Saida:
+- Se tiver ferramenta de arquivos/Python disponivel, gere um arquivo chamado flashcards.csv e forneca o link para download.
+- Para criar o arquivo, use uma lista de linhas e uma funcao fonte(paginaVisual), em vez de reescrever manualmente o HTML da fonte em cada linha.
+- Use o modulo csv ou equivalente para escapar aspas corretamente.
+- Se nao puder criar arquivo para download, entregue somente o CSV puro, sem comentarios.
+- Cabecalho obrigatorio: PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
 `.trim();
 
   const contentPrompt = `
-Agora gere o CSV a partir do material abaixo. Use somente informacoes presentes nas paginas fornecidas.
+Gere agora o CSV a partir do material abaixo. Use somente informacoes presentes nas paginas fornecidas. Para cada card, escolha a pagina visual correspondente e gere FONTE com fonte(paginaVisual).
 
 ${pageBlocks}
 `.trim();
@@ -552,46 +518,46 @@ function slugify(value) {
 }
 
 function buildSourceTitle(sourceType, sourceName) {
-  if (sourceType === 'FRMW2026') {
-    return `Ficha Resumo da Medway 2026: ${sourceName}`;
-  }
-  if (sourceType === 'AMW2026') {
-    return `Apostila da Medway 2026: ${sourceName}`;
-  }
-  return sourceName;
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName });
+  return renderSourceTemplate(template.materialTitleTemplate, context) || sourceName;
 }
 
-function buildSourceLine({ sourceType, sourceName, authors, year, title, container }) {
+function buildSourceLine({ sourceType, sourceName, imageIdentifier, authors, year, title, container }) {
   const finalAuthors = String(authors ?? '').trim() || defaultAuthors(sourceType);
   const finalYear = String(year ?? '').trim() || defaultYear(sourceType);
-  const finalTitle = String(title ?? '').trim() || defaultTitle(sourceType, sourceName);
+  const finalTitle = defaultTitle(
+    sourceType,
+    String(title ?? '').trim() || sourceName,
+    imageIdentifier,
+  );
   const finalContainer = String(container ?? '').trim();
   const containerSuffix = finalContainer ? ` ${finalContainer}.` : '';
-  return `${finalAuthors}. (${finalYear}). <i>${finalTitle}</i>.${containerSuffix}`;
+  return `${finalAuthors} (${finalYear}). <i>${finalTitle}</i>.${containerSuffix}`;
 }
 
 function defaultAuthors(sourceType) {
-  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
-    return 'Medway';
-  }
-  return '[Autor nao informado]';
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName: '' });
+  return renderSourceTemplate(template.authorTemplate, context) || '[Autor nao informado]';
 }
 
 function defaultYear(sourceType) {
-  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
-    return '2026';
-  }
-  return '[Ano nao informado]';
+  return getSourceTemplate(sourceType).year || '[Ano nao informado]';
 }
 
-function defaultTitle(sourceType, sourceName) {
-  if (sourceType === 'FRMW2026') {
-    return `Ficha Resumo da Medway 2026: ${sourceName}`;
-  }
-  if (sourceType === 'AMW2026') {
-    return `Apostila da Medway 2026: ${sourceName}`;
-  }
-  return sourceName;
+function defaultTitle(sourceType, sourceName, imageIdentifier = '') {
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName, imageIdentifier });
+  return renderSourceTemplate(template.documentNameTemplate, context) || sourceName;
+}
+
+function buildTemplateImageBaseName(sourceType, sourceName, imageIdentifier) {
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName, imageIdentifier });
+  const tag = renderSourceTemplate(template.tagTemplate, context) || `Med_${sourceType}`;
+  const referenceImage = renderSourceTemplate(template.referenceImageTemplate, context) || imageIdentifier || sourceName;
+  return `${tag}_${slugify(referenceImage)}`;
 }
 
 function mapLoadProgress(loaded, total) {

@@ -1,13 +1,15 @@
 import { build } from 'esbuild';
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadSourceTemplates } from '../scripts/lib/source-templates.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 const srcDir = path.join(__dirname, 'src');
 const distDir = path.join(__dirname, 'dist');
+const generatedDir = path.join(srcDir, 'generated');
 
 const sharedBuildOptions = {
   bundle: true,
@@ -20,6 +22,14 @@ const sharedBuildOptions = {
 
 await rm(distDir, { recursive: true, force: true });
 await mkdir(distDir, { recursive: true });
+await mkdir(generatedDir, { recursive: true });
+
+const sourceTemplates = await loadSourceTemplates(projectRoot);
+await writeFile(
+  path.join(generatedDir, 'source-templates.js'),
+  `export const SOURCE_TEMPLATES = ${JSON.stringify(sourceTemplates, null, 2)};\n`,
+  'utf8',
+);
 
 await Promise.all([
   build({

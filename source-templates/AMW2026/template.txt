@@ -1,0 +1,8 @@
+label=Apostila da Medway
+Title do material=Apostila da Medway 2026: {Title do material}
+Tag=Med_AMW2026
+reference img src={reference img src}
+Autor=Medway
+Ano=2026
+Nome do Documento=Apostila da Medway 2026: {Nome do Documento}
+container=

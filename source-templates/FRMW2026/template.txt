@@ -1,0 +1,10 @@
+# Campos suportados:
+# label, Title do material, Tag, reference img src, Autor, Ano, Nome do Documento, container
+label=Ficha Resumo da Medway
+Title do material=Ficha Resumo da Medway
+Tag=Med_FRMW2026
+reference img src={reference img src}
+Autor=Medway
+Ano=2026
+Nome do Documento=Ficha Resumo do Extensivo R3 Clínica Médica: {Nome do Documento}
+container=

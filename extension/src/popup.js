@@ -5,17 +5,15 @@ import {
   isLikelyPdfTab,
   safeDecodeURIComponent,
 } from './shared.js';
+import {
+  buildSourceTemplateContext,
+  getSourceTemplate,
+  renderSourceTemplate,
+  SOURCE_TYPE_OPTIONS,
+} from './source-templates.js';
 
 const DEFAULT_DPI = 150;
-const SOURCE_TYPES = [
-  { value: 'FRMW2026', label: 'Ficha Resumo da Medway' },
-  { value: 'AMW2026', label: 'Apostila da Medway' },
-  { value: 'Livro', label: 'Livro' },
-  { value: 'Artigos', label: 'Artigo' },
-  { value: 'Guidelines', label: 'Guideline' },
-  { value: 'UTD', label: 'UpToDate' },
-  { value: 'Outros', label: 'Outros' },
-];
+const SOURCE_TYPES = SOURCE_TYPE_OPTIONS.concat({ value: 'Outros', label: 'Outros' });
 
 const elements = {
   pdfState: document.getElementById('pdfState'),
@@ -32,6 +30,7 @@ const elements = {
   pageEnd: document.getElementById('pageEnd'),
   allPages: document.getElementById('allPages'),
   runButton: document.getElementById('runButton'),
+  downloadImagesButton: document.getElementById('downloadImagesButton'),
   copyInstructionPromptButton: document.getElementById('copyInstructionPromptButton'),
   copyContentPromptButton: document.getElementById('copyContentPromptButton'),
   sourcePreview: document.getElementById('sourcePreview'),
@@ -46,8 +45,11 @@ let currentPdfUrl = '';
 let currentTabId = null;
 let currentJobId = null;
 let currentPdfBaseName = '';
+let lastSettingsPdfBaseName = '';
 let instructionPromptText = '';
 let contentPromptText = '';
+let promptData = null;
+let imageZip = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   void initialize();
@@ -73,8 +75,13 @@ function bindEvents() {
     void copyPrompt(contentPromptText, 'Gere o prompt com conteudo antes de copiar.');
   });
 
+  elements.downloadImagesButton.addEventListener('click', () => {
+    void downloadImages();
+  });
+
   elements.sourceType.addEventListener('change', () => {
     handleSourceTypeChange();
+    syncDerivedSourceFields();
     persistSettings();
     updateSourcePreview();
   });
@@ -86,7 +93,6 @@ function bindEvents() {
 
   for (const input of [
     elements.dpi,
-    elements.sourceName,
     elements.imageIdentifier,
     elements.sourceAuthors,
     elements.sourceYear,
@@ -95,13 +101,17 @@ function bindEvents() {
     elements.pageStart,
     elements.pageEnd,
   ]) {
-    input.addEventListener('input', () => {
+    input.addEventListener('input', (event) => {
+      syncDerivedSourceFields(event.target);
       persistSettings();
       updateSourcePreview();
+      refreshGeneratedPrompts();
     });
-    input.addEventListener('change', () => {
+    input.addEventListener('change', (event) => {
+      syncDerivedSourceFields(event.target);
       persistSettings();
       updateSourcePreview();
+      refreshGeneratedPrompts();
     });
   }
 
@@ -144,8 +154,11 @@ function bindEvents() {
     if (message?.type === 'FLASHMARKER_DONE') {
       instructionPromptText = message.payload?.instructionPrompt ?? '';
       contentPromptText = message.payload?.contentPrompt ?? '';
+      promptData = message.payload?.promptData ?? null;
+      imageZip = message.payload?.imageZip ?? null;
       elements.instructionPromptOutput.value = instructionPromptText;
       elements.contentPromptOutput.value = contentPromptText;
+      updateDownloadImagesButton();
       setStatus(message.message ?? 'Prompts prontos.');
       setProgress(100, message.progressText ?? 'Concluido');
       setBusy(false);
@@ -187,15 +200,33 @@ async function refreshActivePdf() {
     elements.runButton.disabled = false;
 
     const fileName = deriveBaseNameFromPdfUrl(pdfUrl) || deriveBaseNameFromTitle(tab.title) || 'PDF aberto';
+    const inferredSourceType = inferSourceType(fileName);
+    const inferredSourceName = humanizeBaseName(fileName);
+    const shouldRefreshDerivedFields =
+      lastSettingsPdfBaseName !== fileName ||
+      currentPdfBaseName !== fileName;
     currentPdfBaseName = fileName;
     elements.pdfState.textContent = safeDecodeURIComponent(fileName);
     elements.pdfHint.textContent = pdfUrl.startsWith('file:') ? 'PDF local' : 'PDF remoto';
+
+    if (shouldRefreshDerivedFields) {
+      applyDefaults(inferredSourceType, inferredSourceName);
+      instructionPromptText = '';
+      contentPromptText = '';
+      promptData = null;
+      imageZip = null;
+      elements.instructionPromptOutput.value = '';
+      elements.contentPromptOutput.value = '';
+      updateDownloadImagesButton();
+      persistSettings();
+      return;
+    }
 
     if (!elements.imageIdentifier.value.trim()) {
       elements.imageIdentifier.value = inferImageIdentifier(fileName);
     }
 
-    if (!elements.sourceName.value.trim()) {
+    if (!getDocumentName()) {
       applyDefaults(inferSourceType(fileName), humanizeBaseName(fileName));
     }
   } catch (error) {
@@ -216,20 +247,38 @@ function handleSourceTypeChange() {
     return;
   }
 
-  applyDefaults(elements.sourceType.value, elements.sourceName.value.trim());
+  applyDefaults(elements.sourceType.value, getDocumentName());
 }
 
 function applyDefaults(sourceType, sourceName) {
   elements.sourceType.value = sourceType;
-  elements.sourceName.value = sourceName;
-  if (!elements.imageIdentifier.value.trim()) {
-    elements.imageIdentifier.value = inferImageIdentifier(currentPdfBaseName || sourceName);
-  }
+  setDocumentName(sourceName);
+  elements.imageIdentifier.value = inferImageIdentifier(currentPdfBaseName || sourceName);
   elements.sourceAuthors.value = defaultAuthors(sourceType);
   elements.sourceYear.value = defaultYear(sourceType);
-  elements.sourceTitle.value = defaultTitle(sourceType, sourceName);
   elements.sourceContainer.value = defaultContainer(sourceType);
   updateSourcePreview();
+}
+
+function syncDerivedSourceFields(changedElement = null) {
+  if (changedElement === elements.sourceTitle) {
+    elements.sourceName.value = elements.sourceTitle.value.trim();
+    return;
+  }
+  if (!elements.sourceTitle.value.trim() && elements.sourceName.value.trim()) {
+    elements.sourceTitle.value = elements.sourceName.value.trim();
+  }
+  elements.sourceName.value = elements.sourceTitle.value.trim();
+}
+
+function getDocumentName() {
+  return elements.sourceTitle.value.trim() || elements.sourceName.value.trim();
+}
+
+function setDocumentName(value) {
+  const documentName = String(value ?? '').trim();
+  elements.sourceName.value = documentName;
+  elements.sourceTitle.value = documentName;
 }
 
 function clearSourceFields() {
@@ -253,10 +302,10 @@ async function startPromptGeneration() {
       imageIdentifier: elements.imageIdentifier.value.trim(),
       sourceType: elements.sourceType.value,
       dpi: parsePositiveInt(elements.dpi.value || DEFAULT_DPI, 'Qualidade da imagem'),
-      sourceName: elements.sourceName.value.trim(),
+      sourceName: getDocumentName(),
       sourceAuthors: elements.sourceAuthors.value.trim(),
       sourceYear: elements.sourceYear.value.trim(),
-      sourceTitle: elements.sourceTitle.value.trim(),
+      sourceTitle: getDocumentName(),
       sourceContainer: elements.sourceContainer.value.trim(),
       pageStart: parsePositiveInt(elements.pageStart.value, 'Pagina inicial'),
       pageEnd: parsePositiveInt(elements.pageEnd.value, 'Pagina final'),
@@ -264,7 +313,7 @@ async function startPromptGeneration() {
     };
 
     if (!payload.sourceName) {
-      throw new Error('Preencha Source name.');
+      throw new Error('Preencha Nome do Documento.');
     }
 
     if (!payload.imageIdentifier) {
@@ -278,8 +327,11 @@ async function startPromptGeneration() {
     currentJobId = payload.jobId;
     instructionPromptText = '';
     contentPromptText = '';
+    promptData = null;
+    imageZip = null;
     elements.instructionPromptOutput.value = '';
     elements.contentPromptOutput.value = '';
+    updateDownloadImagesButton();
     setBusy(true);
     setStatus('Preparando...');
     setProgress(4, '');
@@ -308,18 +360,40 @@ async function copyPrompt(value, emptyMessage) {
   setStatus('Prompt copiado.');
 }
 
+async function downloadImages() {
+  if (!imageZip?.downloadUrl || !imageZip?.filename) {
+    setStatus('Gere as imagens antes de baixar.');
+    return;
+  }
+
+  const response = await chrome.runtime.sendMessage({
+    target: 'background',
+    type: 'DOWNLOAD_FILE',
+    payload: imageZip,
+  });
+
+  if (!response?.ok) {
+    setStatus(response?.message || 'Nao foi possivel baixar as imagens.');
+    return;
+  }
+
+  setStatus('Download das imagens iniciado.');
+}
+
 function updateSourcePreview() {
-  const sourceName = elements.sourceName.value.trim() || '[Source name]';
+  const sourceName = getDocumentName() || '[Nome do Documento]';
   const sourceType = elements.sourceType.value || 'Outros';
   const pageValue = normalizePreviewPage(elements.pageStart.value || '1');
-  const sourceSlug = slugify(elements.imageIdentifier.value.trim() || inferImageIdentifier(currentPdfBaseName || sourceName));
+  const imageIdentifier = elements.imageIdentifier.value.trim() || inferImageIdentifier(currentPdfBaseName || sourceName);
+  const imageBaseName = buildTemplateImageBaseName(sourceType, sourceName, imageIdentifier);
   const title = buildSourceTitle(sourceType, sourceName);
   const sourceLine = buildSourceLine({
     sourceType,
     sourceName,
+    imageIdentifier,
     authors: elements.sourceAuthors.value.trim(),
     year: elements.sourceYear.value.trim(),
-    title: elements.sourceTitle.value.trim(),
+    title: getDocumentName(),
     container: elements.sourceContainer.value.trim(),
   });
 
@@ -329,13 +403,26 @@ function updateSourcePreview() {
     </div>
     <hr>
     <div class="reference">
-        <img src="Med_${sourceType}_${sourceSlug}-${pageValue}.jpg">
+        <img src="${imageBaseName}-${pageValue}.jpg">
     </div>
     <hr>
     <div class="source">
         ${sourceLine}
     </div>
 </div>`;
+}
+
+function refreshGeneratedPrompts() {
+  if (!promptData) {
+    return;
+  }
+
+  const prompts = buildPromptsFromCurrentFields(promptData);
+  instructionPromptText = prompts.instructionPrompt;
+  contentPromptText = prompts.contentPrompt;
+  elements.instructionPromptOutput.value = instructionPromptText;
+  elements.contentPromptOutput.value = contentPromptText;
+  persistSettings();
 }
 
 function parsePositiveInt(value, label) {
@@ -349,12 +436,12 @@ function parsePositiveInt(value, label) {
 
 function setBusy(isBusy) {
   elements.runButton.disabled = isBusy || !currentPdfUrl;
+  elements.downloadImagesButton.disabled = isBusy || !imageZip?.downloadUrl;
   elements.copyInstructionPromptButton.disabled = isBusy;
   elements.copyContentPromptButton.disabled = isBusy;
   for (const input of [
     elements.sourceType,
     elements.dpi,
-    elements.sourceName,
     elements.imageIdentifier,
     elements.sourceAuthors,
     elements.sourceYear,
@@ -388,23 +475,26 @@ function setProgress(value, label) {
 }
 
 function applySettings(settings) {
+  const documentName = String(settings.sourceTitle ?? '').trim() || String(settings.sourceName ?? '').trim();
+  lastSettingsPdfBaseName = settings.pdfBaseName ?? '';
   elements.dpi.value = settings.dpi ?? DEFAULT_DPI;
   elements.pageStart.value = settings.pageStart ?? 1;
   elements.pageEnd.value = settings.pageEnd ?? 1;
   elements.allPages.checked = Boolean(settings.allPages);
   elements.sourceType.value = settings.sourceType ?? 'FRMW2026';
-  elements.sourceName.value = settings.sourceName ?? '';
+  setDocumentName(documentName);
   elements.imageIdentifier.value = settings.imageIdentifier ?? '';
   elements.sourceAuthors.value = settings.sourceAuthors ?? '';
   elements.sourceYear.value = settings.sourceYear ?? '';
-  elements.sourceTitle.value = settings.sourceTitle ?? '';
   elements.sourceContainer.value = settings.sourceContainer ?? '';
   elements.instructionPromptOutput.value = settings.instructionPromptText ?? '';
   elements.contentPromptOutput.value = settings.contentPromptText ?? '';
   instructionPromptText = settings.instructionPromptText ?? '';
   contentPromptText = settings.contentPromptText ?? '';
+  syncDerivedSourceFields();
   syncPageRangeState();
   updateSourcePreview();
+  updateDownloadImagesButton();
 }
 
 async function loadSettings() {
@@ -417,17 +507,19 @@ async function saveSettings(settings) {
 }
 
 function persistSettings() {
+  lastSettingsPdfBaseName = currentPdfBaseName;
   void saveSettings({
+    pdfBaseName: currentPdfBaseName,
     dpi: elements.dpi.value,
     pageStart: elements.pageStart.value,
     pageEnd: elements.pageEnd.value,
     allPages: elements.allPages.checked,
     sourceType: elements.sourceType.value,
-    sourceName: elements.sourceName.value,
+    sourceName: getDocumentName(),
     imageIdentifier: elements.imageIdentifier.value,
     sourceAuthors: elements.sourceAuthors.value,
     sourceYear: elements.sourceYear.value,
-    sourceTitle: elements.sourceTitle.value,
+    sourceTitle: getDocumentName(),
     sourceContainer: elements.sourceContainer.value,
     instructionPromptText,
     contentPromptText,
@@ -467,6 +559,7 @@ function inferSourceType(fileName) {
 
 function humanizeBaseName(fileName) {
   return String(fileName)
+    .replace(/\.pdf$/i, '')
     .replace(/^Med_[^_]+_/i, '')
     .replace(/-/g, ' ')
     .trim();
@@ -503,53 +596,162 @@ function normalizePreviewPage(value) {
 }
 
 function buildSourceTitle(sourceType, sourceName) {
-  if (sourceType === 'FRMW2026') {
-    return `Ficha Resumo da Medway 2026: ${sourceName}`;
-  }
-  if (sourceType === 'AMW2026') {
-    return `Apostila da Medway 2026: ${sourceName}`;
-  }
-  return sourceName;
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({
+    sourceType,
+    sourceName,
+    imageIdentifier: elements.imageIdentifier.value.trim(),
+  });
+  return renderSourceTemplate(template.materialTitleTemplate, context) || sourceName;
 }
 
-function buildSourceLine({ sourceType, sourceName, authors, year, title, container }) {
+function buildSourceLine({ sourceType, sourceName, imageIdentifier, authors, year, title, container }) {
   const finalAuthors = authors || defaultAuthors(sourceType);
   const finalYear = year || defaultYear(sourceType);
-  const finalTitle = title || defaultTitle(sourceType, sourceName);
+  const finalTitle = defaultTitle(sourceType, title || sourceName, imageIdentifier);
   const finalContainer = container.trim();
   const containerSuffix = finalContainer ? ` ${finalContainer}.` : '';
-  return `${finalAuthors}. (${finalYear}). <i>${finalTitle}</i>.${containerSuffix}`;
+  return `${finalAuthors} (${finalYear}). <i>${finalTitle}</i>.${containerSuffix}`;
 }
 
 function defaultAuthors(sourceType) {
-  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
-    return 'Medway';
-  }
-  return '';
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({
+    sourceType,
+    sourceName: getDocumentName(),
+    imageIdentifier: elements.imageIdentifier.value.trim(),
+  });
+  return renderSourceTemplate(template.authorTemplate, context);
 }
 
 function defaultYear(sourceType) {
-  if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
-    return '2026';
-  }
-  return '';
+  return getSourceTemplate(sourceType).year;
 }
 
-function defaultTitle(sourceType, sourceName) {
-  if (sourceType === 'FRMW2026') {
-    return `Ficha Resumo da Medway 2026: ${sourceName}`;
-  }
-  if (sourceType === 'AMW2026') {
-    return `Apostila da Medway 2026: ${sourceName}`;
-  }
-  return sourceName;
+function defaultTitle(sourceType, sourceName, imageIdentifier = elements.imageIdentifier.value.trim()) {
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName, imageIdentifier });
+  return renderSourceTemplate(template.documentNameTemplate, context) || sourceName;
 }
 
 function defaultContainer(sourceType) {
-  if (sourceType === 'UTD') {
-    return 'UpToDate';
-  }
-  return '';
+  return getSourceTemplate(sourceType).container;
+}
+
+function buildTemplateImageBaseName(sourceType, sourceName, imageIdentifier) {
+  const template = getSourceTemplate(sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName, imageIdentifier });
+  const tag = renderSourceTemplate(template.tagTemplate, context) || `Med_${sourceType}`;
+  const referenceImage = renderSourceTemplate(template.referenceImageTemplate, context) || imageIdentifier || sourceName;
+  return `${tag}_${slugify(referenceImage)}`;
+}
+
+function buildPromptsFromCurrentFields(data) {
+  const sourceName = getDocumentName();
+  const sourceType = elements.sourceType.value || 'Outros';
+  const imageIdentifier = elements.imageIdentifier.value.trim() || inferImageIdentifier(currentPdfBaseName || sourceName);
+  const imageBaseName = buildTemplateImageBaseName(sourceType, sourceName, imageIdentifier);
+  const sourceTitle = buildSourceTitle(sourceType, sourceName);
+  const sourceLine = buildSourceLine({
+    sourceType,
+    sourceName,
+    imageIdentifier,
+    authors: elements.sourceAuthors.value.trim(),
+    year: elements.sourceYear.value.trim(),
+    title: getDocumentName(),
+    container: elements.sourceContainer.value.trim(),
+  });
+  const sourceHtmlTemplate = `<div class="quote">
+    <div class="title">
+        ${sourceTitle}
+    </div>
+    <hr>
+    <div class="reference">
+        <img src="${imageBaseName}-[PaginaVisual].jpg">
+    </div>
+    <hr>
+    <div class="source">
+        ${sourceLine}
+    </div>
+</div>`;
+  const pageBlocks = (data.pages ?? [])
+    .map((page) => {
+      const excerpt = String(page.text ?? '').trim() || '[Sem texto extraido desta pagina]';
+      return [
+        `### PAGINA_VISUAL_${page.visualPage}`,
+        `ARQUIVO_IMAGEM: ${imageBaseName}-${page.visualPage}.jpg`,
+        'TEXTO_EXTRAIDO:',
+        excerpt,
+      ].join('\n');
+    })
+    .join('\n\n');
+
+  return {
+    instructionPrompt: buildInstructionPrompt({ sourceHtmlTemplate, imageBaseName }),
+    contentPrompt: buildContentPrompt(pageBlocks),
+  };
+}
+
+function buildInstructionPrompt({ sourceHtmlTemplate, imageBaseName }) {
+  return `
+Voce e um especialista em flashcards para provas de residencia medica/R3.
+
+Quando eu enviar o material, gere poucos flashcards BASIC em CSV, apenas com informacoes high-yield que precisem ser memorizadas. Priorize cortes, criterios, tempos, excecoes, indicacoes, contraindicoes, sequencias, testes de escolha, definicoes operacionais e detalhes literais de prova.
+
+Evite:
+- raciocinio clinico amplo;
+- perguntas vagas;
+- informacoes obvias ou dedutiveis;
+- cards longos;
+- inventar dados ausentes;
+- misturar varios conceitos no mesmo card.
+
+Formato do CSV:
+PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
+
+Regras dos campos:
+- Todos os campos devem conter HTML.
+- PERGUNTA: direta, testando uma unica informacao, em HTML.
+- DICA: curta, sem entregar a resposta, em HTML.
+- RESPOSTA: em HTML, usando <p> ou <ul><li>.
+- Em listas HTML, use ponto e virgula ao fim dos itens intermediarios e ponto final no ultimo item.
+- EXPLICACAO: em HTML, preferencialmente <p>, com explicacao densa de cerca de 5 linhas.
+- Na EXPLICACAO, va alem de repetir o material: contextualize com conhecimento medico consolidado, fisiopatologia, implicacao pratica ou motivo de prova.
+- Nao comece a EXPLICACAO com frases como "No material", "O material diz", "Segundo o texto" ou equivalentes.
+- A resposta cobrada deve estar presente no material; o conhecimento externo deve apenas explicar e contextualizar.
+- FONTE: sempre HTML, gerada pela funcao fonte(paginaVisual).
+
+Use este template uma unica vez para gerar a coluna FONTE:
+${sourceHtmlTemplate}
+
+Defina mentalmente ou em codigo:
+fonte(paginaVisual) = template acima com [PaginaVisual] substituido por paginaVisual.
+
+Regras da fonte:
+- A unica parte variavel da fonte entre flashcards e [PaginaVisual].
+- Use pagina visual do PDF/material, como 01, 02, 03.
+- Nao coloque pagina no texto bibliografico da <div class="source">.
+- O src da imagem deve ficar exatamente: ${imageBaseName}-[PaginaVisual].jpg.
+
+Saida:
+- Se tiver ferramenta de arquivos/Python disponivel, gere um arquivo chamado flashcards.csv e forneca o link para download.
+- Para criar o arquivo, use uma lista de linhas e uma funcao fonte(paginaVisual), em vez de reescrever manualmente o HTML da fonte em cada linha.
+- Use o modulo csv ou equivalente para escapar aspas corretamente.
+- Se nao puder criar arquivo para download, entregue somente o CSV puro, sem comentarios.
+- Cabecalho obrigatorio: PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
+`.trim();
+}
+
+function buildContentPrompt(pageBlocks) {
+  return `
+Gere agora o CSV a partir do material abaixo. Use somente informacoes presentes nas paginas fornecidas. Para cada card, escolha a pagina visual correspondente e gere FONTE com fonte(paginaVisual).
+
+${pageBlocks}
+`.trim();
+}
+
+function updateDownloadImagesButton() {
+  elements.downloadImagesButton.disabled = Boolean(currentJobId) || !imageZip?.downloadUrl;
 }
 
 function escapeHtml(value) {

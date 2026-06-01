@@ -234,12 +234,12 @@ REGRAS PARA IDENTIFICAR O TIPO DA FONTE:
 - O título visual interno do PDF pode ajudar na referência bibliográfica, mas não deve substituir o tipo da fonte.
 
 REGRA ESPECIAL PARA FICHAS-RESUMO DA MEDWAY 2026:
-- Se o tipo da fonte for FRMW2026, trate obrigatoriamente o material como “Ficha Resumo da Medway 2026”.
+- Se o tipo da fonte for FRMW2026, trate obrigatoriamente o material como “Ficha Resumo do Extensivo R3 Clínica Médica”.
 - Nesse caso, o [TipoDaFonte] deve ser sempre “FRMW2026”.
 - A <div class="title"> deve seguir o padrão:
-  Ficha Resumo da Medway 2026: ${sourceName}
+  Ficha Resumo da Medway
 - A <div class="source"> deve seguir o padrão:
-  Medway. (2026). <i>Ficha Resumo da Medway 2026: ${sourceName}</i>. Medway.
+  Medway (2026). <i>Ficha Resumo do Extensivo R3 Clínica Médica: ${sourceName}</i>. Medway.
 - O campo <img src=""> deve preservar o padrão:
   Med_FRMW2026_${sourceSlug}-[PaginaVisual].jpg
 
@@ -249,7 +249,7 @@ REGRA ESPECIAL PARA APOSTILAS DA MEDWAY 2026:
 - A <div class="title"> deve seguir o padrão:
   Apostila da Medway 2026: ${sourceName}
 - A <div class="source"> deve seguir o padrão:
-  Medway. (2026). <i>Apostila da Medway 2026: ${sourceName}</i>. Medway.
+  Medway (2026). <i>Apostila da Medway 2026: ${sourceName}</i>. Medway.
 - O campo <img src=""> deve preservar o padrão:
   Med_AMW2026_${sourceSlug}-[PaginaVisual].jpg
 

@@ -4,7 +4,6 @@ import { access, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  SOURCE_TYPES,
   buildRunDirectoryName,
   deriveSourceNameFromFile,
   discoverPdfFiles,
@@ -12,6 +11,7 @@ import {
   readPdfPageCount,
   validatePdfPath,
 } from './lib/app-core.mjs';
+import { listSourceTypes, loadSourceTemplates } from './lib/source-templates.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,6 +60,7 @@ async function handleRequest(request, response) {
 
 async function handleApiRequest(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/pdfs') {
+    const sourceTemplates = await loadSourceTemplates(projectRoot);
     const pdfPaths = await discoverPdfFiles(projectRoot);
     const items = await Promise.all(
       pdfPaths.map(async (pdfPath) => {
@@ -73,7 +74,11 @@ async function handleApiRequest(request, response, url) {
         };
       }),
     );
-    sendJson(response, 200, { items, sourceTypes: SOURCE_TYPES });
+    sendJson(response, 200, {
+      items,
+      sourceTypes: listSourceTypes(sourceTemplates),
+      sourceTemplates,
+    });
     return;
   }
 
@@ -92,6 +97,8 @@ async function handleApiRequest(request, response, url) {
   }
 
   if (request.method === 'POST' && url.pathname === '/api/extract') {
+    const sourceTemplates = await loadSourceTemplates(projectRoot);
+    const sourceTypes = listSourceTypes(sourceTemplates);
     const body = await readJsonBody(request);
     const pdfPath = await validatePdfPath(String(body.pdfPath ?? ''));
     const sourceName = String(body.sourceName ?? '').trim();
@@ -112,7 +119,7 @@ async function handleApiRequest(request, response, url) {
     if (!sourceName) {
       throw new Error('sourceName e obrigatorio.');
     }
-    if (!SOURCE_TYPES.includes(sourceType)) {
+    if (!sourceTypes.includes(sourceType)) {
       throw new Error('sourceType invalido.');
     }
 

@@ -1,5 +1,12 @@
+import {
+  buildSourceTemplateContext,
+  getSourceTemplate,
+  renderSourceTemplate,
+} from './source-templates.js';
+
 const state = {
   pdfs: [],
+  sourceTemplates: {},
   selectedPdf: null,
   extraction: null,
   activeJobId: null,
@@ -66,6 +73,7 @@ async function loadPdfs() {
   setBusy('Carregando PDFs');
   const payload = await fetchJson('/api/pdfs');
   state.pdfs = payload.items;
+  state.sourceTemplates = payload.sourceTemplates ?? {};
   fillSourceTypes(payload.sourceTypes);
   fillPdfSelect(payload.items);
   setIdle('PDFs carregados');
@@ -73,7 +81,10 @@ async function loadPdfs() {
 
 function fillSourceTypes(sourceTypes) {
   elements.sourceType.innerHTML = sourceTypes
-    .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
+    .map((item) => {
+      const template = getSourceTemplate(state.sourceTemplates, item);
+      return `<option value="${escapeHtml(item)}">${escapeHtml(template.label || item)}</option>`;
+    })
     .join('');
 }
 
@@ -118,7 +129,7 @@ function applyPdfInfo(info) {
   elements.sourceType.value = info.inferredSourceType;
   elements.sourceAuthors.value = defaultAuthors(info.inferredSourceType);
   elements.sourceYear.value = defaultYear(info.inferredSourceType);
-  elements.sourceTitle.value = defaultTitle(info.inferredSourceType, info.inferredSourceName);
+  elements.sourceTitle.value = '';
   elements.sourceContainer.value = defaultContainer(info.inferredSourceType);
   elements.pageStart.value = 1;
   elements.pageEnd.value = info.totalPages;
@@ -137,14 +148,16 @@ async function extractPages() {
     setLog('Selecione um PDF.');
     return;
   }
+  const sourceName = elements.sourceName.value.trim();
+  const sourceType = elements.sourceType.value;
 
   const payload = {
     pdfPath,
-    sourceName: elements.sourceName.value.trim(),
-    sourceType: elements.sourceType.value,
+    sourceName,
+    sourceType,
     sourceAuthors: elements.sourceAuthors.value.trim(),
     sourceYear: elements.sourceYear.value.trim(),
-    sourceTitle: elements.sourceTitle.value.trim(),
+    sourceTitle: elements.sourceTitle.value.trim() || defaultTitle(sourceType, sourceName),
     sourceContainer: elements.sourceContainer.value.trim(),
     pageStart: elements.pageStart.value || 1,
     pageEnd: elements.pageEnd.value || state.selectedPdf?.totalPages,
@@ -270,7 +283,7 @@ function updateSourcePreview() {
   const sourceName = elements.sourceName.value.trim() || '[Source name]';
   const sourceType = elements.sourceType.value || 'Artigos';
   const pageValue = normalizePreviewPage(elements.pageStart.value || '1');
-  const sourceSlug = slugify(sourceName);
+  const imageBaseName = buildTemplateImageBaseName(sourceType, sourceName, sourceName);
   const title = buildSourceTitle(sourceType, sourceName);
   const sourceLine = buildSourceLine(
     sourceType,
@@ -287,7 +300,7 @@ function updateSourcePreview() {
     </div>
     <hr>
     <div class="reference">
-        <img src="Med_${sourceType}_${sourceSlug}-${pageValue}.jpg">
+        <img src="${imageBaseName}-${pageValue}.jpg">
     </div>
     <hr>
     <div class="source">
@@ -410,40 +423,35 @@ function normalizePreviewPage(value) {
 }
 
 function buildSourceTitle(sourceType, sourceName) {
-  if (sourceType === 'FRMW2026') {
-    return `Ficha Resumo da Medway 2026: ${sourceName}`;
-  }
-  if (sourceType === 'AMW2026') {
-    return `Apostila da Medway 2026: ${sourceName}`;
-  }
-  return sourceName;
+  const template = getSourceTemplate(state.sourceTemplates, sourceType);
+  return renderSourceTemplate(template.previewTitle, { sourceName, sourceType }) || sourceName;
 }
 
 function buildSourceLine(sourceType, sourceName, authors, year, title, container) {
   const finalAuthors = authors || defaultAuthors(sourceType);
   const finalYear = year || defaultYear(sourceType);
-  const finalTitle = title || defaultTitle(sourceType, sourceName);
+  const finalTitle = defaultTitle(sourceType, title || sourceName);
   const finalContainer = container || defaultContainer(sourceType);
-  return `${finalAuthors}. (${finalYear}). <i>${finalTitle}</i>. ${finalContainer}.`;
+  return `${finalAuthors} (${finalYear}). <i>${finalTitle}</i>. ${finalContainer}.`;
 }
 
-function defaultAuthors(sourceType) {
+function legacyOldDefaultAuthors(sourceType) {
   if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
     return 'Medway';
   }
   return '[Autor não informado]';
 }
 
-function defaultYear(sourceType) {
+function legacyOldDefaultYear(sourceType) {
   if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
     return '2026';
   }
   return '[Ano não informado]';
 }
 
-function defaultTitle(sourceType, sourceName) {
+function legacyOldDefaultTitle(sourceType, sourceName) {
   if (sourceType === 'FRMW2026') {
-    return `Ficha Resumo da Medway 2026: ${sourceName}`;
+    return `Ficha Resumo do Extensivo R3 Clínica Médica: ${sourceName}`;
   }
   if (sourceType === 'AMW2026') {
     return `Apostila da Medway 2026: ${sourceName}`;
@@ -451,7 +459,7 @@ function defaultTitle(sourceType, sourceName) {
   return sourceName;
 }
 
-function defaultContainer(sourceType) {
+function legacyOldDefaultContainer(sourceType) {
   if (sourceType === 'FRMW2026' || sourceType === 'AMW2026') {
     return 'Medway';
   }
@@ -459,4 +467,27 @@ function defaultContainer(sourceType) {
     return 'UpToDate';
   }
   return '[Fonte não informada]';
+}
+function defaultAuthors(sourceType) {
+  return getSourceTemplate(state.sourceTemplates, sourceType).authors || '[Autor nÃ£o informado]';
+}
+
+function defaultYear(sourceType) {
+  return getSourceTemplate(state.sourceTemplates, sourceType).year || '[Ano nÃ£o informado]';
+}
+
+function defaultTitle(sourceType, sourceName) {
+  const template = getSourceTemplate(state.sourceTemplates, sourceType);
+  return renderSourceTemplate(template.titleTemplate, { sourceName, sourceType }) || sourceName;
+}
+
+function defaultContainer(sourceType) {
+  return getSourceTemplate(state.sourceTemplates, sourceType).container || '[Fonte nÃ£o informada]';
+}
+function buildTemplateImageBaseName(sourceType, sourceName, imageIdentifier) {
+  const template = getSourceTemplate(state.sourceTemplates, sourceType);
+  const context = buildSourceTemplateContext({ sourceType, sourceName, imageIdentifier });
+  const tag = renderSourceTemplate(template.tagTemplate, context) || `Med_${sourceType}`;
+  const referenceImage = renderSourceTemplate(template.referenceImageTemplate, context) || imageIdentifier || sourceName;
+  return `${tag}_${slugify(referenceImage)}`;
 }
