@@ -3,15 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "bin": {
-    "flashmarker": "./bin/flashmarker.mjs"
-  },
   "scripts": {
-    "start": "node bin/flashmarker.mjs start",
-    "build": "node extension/build.mjs",
-    "flashcards:extract": "python3 scripts/extract_pdf_pages.py",
-    "flashcards:generate": "node scripts/generate-flashcards.mjs",
-    "web": "node scripts/web-server.mjs"
+    "build": "node extension/build.mjs"
   },
   "dependencies": {
     "esbuild": "^0.28.0",

@@ -83,6 +83,20 @@ export const SOURCE_TEMPLATES = {
     "referenceImageTemplate": "{reference img src}",
     "container": ""
   },
+  "Harrison22nd": {
+    "type": "Harrison22nd",
+    "label": "Harrison 22nd",
+    "materialTitleTemplate": "Harrison's Principles of Internal Medicine (22nd Edition)",
+    "previewTitle": "Harrison's Principles of Internal Medicine (22nd Edition)",
+    "authorTemplate": "Longo, D. L., Fauci, A. S., Kasper, D. L., Hauser, S. L., Jameson, J. L., Loscalzo, J., Holland, S. M., &amp; Langford, C. A.",
+    "authors": "Longo, D. L., Fauci, A. S., Kasper, D. L., Hauser, S. L., Jameson, J. L., Loscalzo, J., Holland, S. M., &amp; Langford, C. A.",
+    "year": "2025",
+    "documentNameTemplate": "Harrison's Principles of Internal Medicine (22nd Edition)",
+    "titleTemplate": "Harrison's Principles of Internal Medicine (22nd Edition)",
+    "tagTemplate": "Med_Livros",
+    "referenceImageTemplate": "{reference img src}",
+    "container": "McGraw Hill"
+  },
   "UTD": {
     "type": "UTD",
     "label": "UpToDate",

@@ -1,8 +1,0 @@
-label=Guideline
-Title do material={Title do material}
-Tag=Med_Guidelines
-reference img src={reference img src}
-Autor=
-Ano=
-Nome do Documento={Nome do Documento}
-container=

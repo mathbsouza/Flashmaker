@@ -1,8 +1,0 @@
-label=UpToDate
-Title do material={Title do material}
-Tag=Med_UTD
-reference img src={reference img src}
-Autor=
-Ano=
-Nome do Documento={Nome do Documento}
-container=UpToDate

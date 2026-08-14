@@ -420,55 +420,67 @@ function buildPrompts({
     .join('\n\n');
 
   const instructionPrompt = `
-Voce e um especialista em flashcards para provas de residencia medica/R3.
+Você é um professor experiente de medicina criando flashcards BASIC para provas de residência médica/R3.
 
-Quando eu enviar o material, gere poucos flashcards BASIC em CSV, apenas com informacoes high-yield que precisem ser memorizadas. Priorize cortes, criterios, tempos, excecoes, indicacoes, contraindicoes, sequencias, testes de escolha, definicoes operacionais e detalhes literais de prova.
+Quando eu enviar o material, gere poucos flashcards em CSV, selecionando apenas informações high-yield que merecem memorização ativa. Adote estilo didático, formal e explicativo, com perguntas claras e conceituais. Priorize definições, mecanismos, fatores associados, consequências fisiológicas, distinções entre conceitos próximos, critérios, exceções, indicações, contraindicações, sequências e detalhes clássicos de prova.
+
+Cada card deve cobrar uma única pergunta. A pergunta deve ser autocontida, precisa e formulada de modo que o aluno entenda exatamente qual conceito está sendo testado. Evite perguntas vagas, duplas, excessivamente amplas ou dependentes de contexto oculto.
+
+As respostas devem ser diretas, completas e em linguagem médica precisa. Prefira respostas de uma linha quando a resposta não envolver lista; use lista apenas quando houver vários itens indispensáveis. Não use respostas telegráficas demais, abreviações simbólicas ou frases que pareçam apenas palavras soltas.
+
+As explicações devem desenvolver de maneira substancial o raciocínio subjacente, conectando o conceito à fisiopatologia, interpretação clínica ou forma como costuma ser cobrado em prova. O texto deve soar como um professor explicando um ponto relevante: tecnicamente rigoroso, pedagógico, seguro e relativamente detalhado, sem se limitar a repetir a resposta mínima.
+
+Quando pertinente, destaque erros clássicos, inversões conceituais e associações de prova. Use encadeamento causal explícito e contextualização suficiente para evitar memorização mecânica.
 
 Evite:
-- raciocinio clinico amplo;
-- perguntas vagas;
-- informacoes obvias ou dedutiveis;
-- cards longos;
 - inventar dados ausentes;
-- misturar varios conceitos no mesmo card.
+- misturar vários conceitos no mesmo card;
+- criar cards sobre informações óbvias ou dedutíveis;
+- usar raciocínio clínico amplo quando o material só sustenta um conceito específico;
+- exagerar no uso de negrito.
 
 Formato do CSV:
-PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
+\`PERGUNTA,DICA,RESPOSTA,EXPLICAÇÃO,FONTE,SUBDECK\`
 
 Regras dos campos:
-- Todos os campos devem conter HTML.
-- PERGUNTA: direta, testando uma unica informacao, em HTML.
+- PERGUNTA, DICA, RESPOSTA, EXPLICAÇÃO e FONTE devem conter HTML.
+- PERGUNTA: clara, conceitual, autocontida e testando uma única informação, em HTML.
 - DICA: curta, sem entregar a resposta, em HTML.
-- RESPOSTA: em HTML, usando <p> ou <ul><li>.
-- Em listas HTML, use ponto e virgula ao fim dos itens intermediarios e ponto final no ultimo item.
-- EXPLICACAO: em HTML, preferencialmente <p>, com explicacao densa de cerca de 5 linhas.
-- Na EXPLICACAO, va alem de repetir o material: contextualize com conhecimento medico consolidado, fisiopatologia, implicacao pratica ou motivo de prova.
-- Nao comece a EXPLICACAO com frases como "No material", "O material diz", "Segundo o texto" ou equivalentes.
+- RESPOSTA: direta, completa e preferencialmente em uma linha, em HTML, usando \`<p>\` ou \`<ul><li>\`.
+- Em listas HTML, cada item deve começar com letra maiúscula após \`<li>\`; use ponto e vírgula ao fim dos itens intermediários e ponto final no último item.
+- Use \`<strong>\` raramente e apenas quando o realce for realmente necessário; não coloque negrito por hábito.
+- EXPLICAÇÃO: em HTML, preferencialmente \`<p>\`, com explicação didática, formal e detalhada, contendo no mínimo 5 frases completas ou cerca de 120 a 180 palavras, sem quebrar a linha do CSV.
+- Na EXPLICAÇÃO, vá além de repetir o material: desenvolva o raciocínio com encadeamento causal, contextualizando com conhecimento médico consolidado, fisiopatologia, implicação prática, erro clássico ou motivo de prova. Não use explicações curtas de uma ou duas frases.
+- Não comece a EXPLICAÇÃO com frases como "No material", "O material diz", "Segundo o texto", "Segundo o material", "Segundo a fonte" ou equivalentes.
+- Evite em qualquer campo formulações metalinguísticas como "segundo a fonte", "segundo o material", "de acordo com o texto" ou "conforme a fonte"; escreva a informação diretamente, como conhecimento médico.
 - A resposta cobrada deve estar presente no material; o conhecimento externo deve apenas explicar e contextualizar.
-- FONTE: sempre HTML, gerada pela funcao fonte(paginaVisual).
+- FONTE: sempre HTML, gerada pela função fonte(paginaVisual).
+- SUBDECK: sugestão curta de subdeck, sem HTML, baseada no tema principal do card. Use hierarquia com :: quando útil, por exemplo: Clínica Médica::Infectologia::Meningites.
 
-Use este template uma unica vez para gerar a coluna FONTE:
+Use este template uma única vez para gerar a coluna FONTE:
+~~~html
 ${sourceHtmlTemplate}
+~~~
 
-Defina mentalmente ou em codigo:
-fonte(paginaVisual) = template acima com [PaginaVisual] substituido por paginaVisual.
+Defina mentalmente ou em código:
+fonte(paginaVisual) = template acima com [PaginaVisual] substituído por paginaVisual.
 
 Regras da fonte:
-- A unica parte variavel da fonte entre flashcards e [PaginaVisual].
-- Use pagina visual do PDF/material, como 01, 02, 03.
-- Nao coloque pagina no texto bibliografico da <div class="source">.
+- A única parte variável da fonte entre flashcards é [PaginaVisual].
+- Use página visual do PDF/material, como 01, 02, 03.
+- Não coloque página no texto bibliográfico da \`<div class="source">\`.
 - O src da imagem deve ficar exatamente: ${imageBaseName}-[PaginaVisual].jpg.
 
-Saida:
-- Se tiver ferramenta de arquivos/Python disponivel, gere um arquivo chamado flashcards.csv e forneca o link para download.
-- Para criar o arquivo, use uma lista de linhas e uma funcao fonte(paginaVisual), em vez de reescrever manualmente o HTML da fonte em cada linha.
-- Use o modulo csv ou equivalente para escapar aspas corretamente.
-- Se nao puder criar arquivo para download, entregue somente o CSV puro, sem comentarios.
-- Cabecalho obrigatorio: PERGUNTA,DICA,RESPOSTA,EXPLICACAO,FONTE
+Saída:
+- Se tiver ferramenta de arquivos/Python disponível, gere um arquivo chamado flashcards.csv e forneça o link para download.
+- Para criar o arquivo, use uma lista de linhas e uma função fonte(paginaVisual), em vez de reescrever manualmente o HTML da fonte em cada linha.
+- Use o módulo csv ou equivalente para escapar aspas corretamente.
+- Se não puder criar arquivo para download, entregue somente o CSV puro, sem comentários.
+- Cabeçalho obrigatório: \`PERGUNTA,DICA,RESPOSTA,EXPLICAÇÃO,FONTE,SUBDECK\`
 `.trim();
 
   const contentPrompt = `
-Gere agora o CSV a partir do material abaixo. Use somente informacoes presentes nas paginas fornecidas. Para cada card, escolha a pagina visual correspondente e gere FONTE com fonte(paginaVisual).
+Gere agora o CSV a partir do material abaixo. Use somente informações presentes nas páginas fornecidas. Para cada card, escolha a página visual correspondente, gere FONTE com fonte(paginaVisual) e sugira um SUBDECK coerente.
 
 ${pageBlocks}
 `.trim();

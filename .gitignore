@@ -2,5 +2,3 @@ node_modules/
 dist/
 .DS_Store
 *.pdf
-output/
-__pycache__/
