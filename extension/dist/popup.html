@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlashMaker</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div class="brand-row">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" role="img">
+              <path d="M5 4.5A2.5 2.5 0 0 1 7.5 2h9A2.5 2.5 0 0 1 19 4.5v15.2a.8.8 0 0 1-1.22.68L12 16.8l-5.78 3.58A.8.8 0 0 1 5 19.7V4.5Z" fill="currentColor" />
+            </svg>
+          </span>
+          <p class="app">FlashMaker</p>
+        </div>
+        <h1>Prompt de flashcards</h1>
+        <p id="pdfHint" class="muted">Abra um PDF no Chrome para comecar.</p>
+      </header>
+
+      <section class="panel config-panel">
+        <div class="section-head">
+          <p class="section-title">
+            <span class="title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15">
+                <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5v-13Z" fill="none" stroke="currentColor" stroke-width="1.8" />
+                <path d="M8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+            </span>
+            Fonte
+          </p>
+        </div>
+
+        <label class="field">
+          <span>PDF encontrado</span>
+          <div id="pdfState" class="readout">Nenhum PDF selecionado</div>
+        </label>
+
+        <label class="field">
+          <span>Tipo da fonte</span>
+          <select id="sourceType"></select>
+        </label>
+
+        <label class="field">
+          <span>Qualidade da imagem</span>
+          <input id="dpi" type="number" min="72" step="1" value="150" />
+        </label>
+
+        <input id="sourceName" type="hidden" />
+
+        <label class="field">
+          <span>reference img src</span>
+          <input id="imageIdentifier" type="text" placeholder="Trecho depois de Med_FRMW2026_" />
+        </label>
+
+        <label class="field">
+          <span>Autor</span>
+          <input id="sourceAuthors" type="text" placeholder="Ex.: Medway" />
+        </label>
+
+        <label class="field">
+          <span>Ano</span>
+          <input id="sourceYear" type="text" placeholder="Ex.: 2026" />
+        </label>
+
+        <label class="field">
+          <span>Nome do Documento</span>
+          <input id="sourceTitle" type="text" placeholder="Ex.: Infecções do Sistema Nervoso Central" />
+        </label>
+
+        <label class="field">
+          <span>container</span>
+          <input id="sourceContainer" type="text" placeholder="Periodico, editora ou instituicao no bloco source" />
+        </label>
+
+        <label class="field">
+          <span>Pagina inicial</span>
+          <input id="pageStart" type="number" min="1" step="1" value="1" />
+        </label>
+
+        <label class="field">
+          <span>Pagina final</span>
+          <input id="pageEnd" type="number" min="1" step="1" value="1" />
+        </label>
+
+        <label class="check-field">
+          <input id="allPages" type="checkbox" />
+          <span>Usar todas as paginas</span>
+        </label>
+
+        <button id="runButton" type="button" class="primary-action">
+          <span aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17">
+              <path d="M12 3v10m0 0 4-4m-4 4-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M5 14v3.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </span>
+          Extrair PDF e gerar prompt
+        </button>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <p class="section-title">
+            <span class="title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15">
+                <path d="M3.5 12s3-6 8.5-6 8.5 6 8.5 6-3 6-8.5 6-8.5-6-8.5-6Z" fill="none" stroke="currentColor" stroke-width="1.8" />
+                <circle cx="12" cy="12" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+              </svg>
+            </span>
+            Preview da Fonte
+          </p>
+        </div>
+        <pre id="sourcePreview" class="preview-block"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <p class="section-title">
+            <span class="title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15">
+                <path d="M12 8v5l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8" />
+              </svg>
+            </span>
+            Status
+          </p>
+        </div>
+        <p id="statusText" class="status-text">Pronto.</p>
+        <div class="bar">
+          <div id="progressBar"></div>
+        </div>
+        <p id="progressText" class="muted"></p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <p class="section-title">
+            <span class="title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15">
+                <path d="M9 4h8a2 2 0 0 1 2 2v10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                <path d="M5 8h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.8" />
+              </svg>
+            </span>
+            Prompt para enviar antes
+          </p>
+          <button id="copyInstructionPromptButton" type="button" class="ghost" title="Copiar prompt">
+            <span aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <path d="M9 4h8a2 2 0 0 1 2 2v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path d="M5 8h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="2" />
+              </svg>
+            </span>
+            Copiar
+          </button>
+        </div>
+        <textarea id="instructionPromptOutput" readonly placeholder="As instrucoes para o ChatGPT vao aparecer aqui."></textarea>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <p class="section-title">
+            <span class="title-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15">
+                <path d="M5 4h9l5 5v11H5V4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+                <path d="M14 4v5h5M8 13h8M8 17h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            Prompt com o conteudo
+          </p>
+          <button id="copyContentPromptButton" type="button" class="ghost" title="Copiar prompt">
+            <span aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <path d="M9 4h8a2 2 0 0 1 2 2v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path d="M5 8h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="2" />
+              </svg>
+            </span>
+            Copiar
+          </button>
+        </div>
+        <textarea id="contentPromptOutput" readonly placeholder="O conteudo extraido do PDF vai aparecer aqui."></textarea>
+      </section>
+
+      <section class="panel footer-actions">
+        <button id="downloadImagesButton" type="button" class="secondary-action" disabled>
+          <span aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17">
+              <path d="M12 3v10m0 0 4-4m-4 4-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M4 17.5A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </span>
+          Download das imagens
+        </button>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
