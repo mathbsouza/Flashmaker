@@ -23928,7 +23928,10 @@
       withCredentials: true,
       rangeChunkSize: 1024 * 1024,
       useWorkerFetch: true,
-      isOffscreenCanvasSupported: true,
+      // Keep decoded images as pixel data. The ImageBitmap/OffscreenCanvas path
+      // drops some JPEG 2000 images in Chromium (e.g. the logos on page 11 of
+      // Med_FRMW2026_Hipertensao-Arterial-Sistemica.pdf).
+      isOffscreenCanvasSupported: false,
       canvasMaxAreaInBytes: 32 * 1024 * 1024
     });
     loadingTask.onProgress = ({ loaded, total }) => {
@@ -23951,7 +23954,7 @@
     emitStatus("Abrindo PDF...", 12, formatBytes(data.byteLength));
     const loadingTask = __webpack_exports__getDocument({
       data,
-      isOffscreenCanvasSupported: true,
+      isOffscreenCanvasSupported: false,
       canvasMaxAreaInBytes: 32 * 1024 * 1024
     });
     return {
